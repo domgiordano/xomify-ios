@@ -18,6 +18,8 @@
 	</array>
 	<key>SpotifyClientId</key>
 	<string>$(SPOTIFY_CLIENT_ID)</string>
+	<key>SpotifyClientSecret</key>
+	<string>$(SPOTIFY_CLIENT_SECRET)</string>
 	<key>XomifyApiId</key>
 	<string>$(XOMIFY_API_ID)</string>
 	<key>XomifyApiToken</key>

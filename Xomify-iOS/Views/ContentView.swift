@@ -1,21 +1,19 @@
-//
-//  ContentView.swift
-//  Xomify-iOS
-//
-//  Created by Dominick Giordano on 1/2/26.
-//
-
 import SwiftUI
 
+/// Root view - switches between Login and Main app based on auth state
 struct ContentView: View {
+    
+    @State private var authService = AuthService.shared
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if authService.isAuthenticated {
+                MainTabView()
+            } else {
+                LoginView()
+            }
         }
-        .padding()
+        .animation(.easeInOut, value: authService.isAuthenticated)
     }
 }
 
