@@ -86,22 +86,28 @@ actor NetworkService {
     // MARK: - Xomify API
     
     /// Make a request to your Xomify backend
+    /// Automatically includes the user's email from AuthService
     func xomifyRequest<T: Decodable>(
         endpoint: String,
         method: HTTPMethod = .get,
         queryParams: [String: String]? = nil,
         body: [String: Any]? = nil
     ) async throws -> T {
+        guard let email = await AuthService.shared.userEmail else {
+            throw NetworkError.unauthorized
+        }
+        
         var components = URLComponents(string: "\(Config.xomifyApiBaseUrl)\(endpoint)")!
         
-        if let queryParams = queryParams {
-            components.queryItems = queryParams.map { URLQueryItem(name: $0.key, value: $0.value) }
-        }
+        // Always include email in query params
+        var allParams = queryParams ?? [:]
+        allParams["email"] = email
+        components.queryItems = allParams.map { URLQueryItem(name: $0.key, value: $0.value) }
         
         var request = URLRequest(url: components.url!)
         request.httpMethod = method.rawValue
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(Config.xomifyApiToken, forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(Config.xomifyApiToken)", forHTTPHeaderField: "Authorization")
         
         if let body = body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -132,7 +138,10 @@ actor NetworkService {
         // Log for debugging
         #if DEBUG
         if let url = request.url {
-            print("📡 \(request.httpMethod ?? "GET") \(url.path) → \(httpResponse.statusCode)")
+            print("📡 \(request.httpMethod ?? "GET") \(url.absoluteString) → \(httpResponse.statusCode)")
+        }
+        if let json = String(data: data, encoding: .utf8) {
+            print("📄 Response (\(data.count) bytes): \(json.prefix(1000))")
         }
         #endif
         
@@ -152,9 +161,24 @@ actor NetworkService {
                 return try decoder.decode(T.self, from: data)
             } catch {
                 #if DEBUG
-                print("❌ Decode error: \(error)")
-                if let json = String(data: data, encoding: .utf8) {
-                    print("📄 Response: \(json.prefix(500))")
+                print("❌ Decode error for type \(T.self): \(error)")
+                if let decodingError = error as? DecodingError {
+                    switch decodingError {
+                    case .keyNotFound(let key, let context):
+                        print("   Key '\(key.stringValue)' not found: \(context.debugDescription)")
+                        print("   Path: \(context.codingPath.map { $0.stringValue }.joined(separator: " -> "))")
+                    case .typeMismatch(let type, let context):
+                        print("   Type mismatch for \(type): \(context.debugDescription)")
+                        print("   Path: \(context.codingPath.map { $0.stringValue }.joined(separator: " -> "))")
+                    case .valueNotFound(let type, let context):
+                        print("   Value not found for \(type): \(context.debugDescription)")
+                        print("   Path: \(context.codingPath.map { $0.stringValue }.joined(separator: " -> "))")
+                    case .dataCorrupted(let context):
+                        print("   Data corrupted: \(context.debugDescription)")
+                        print("   Path: \(context.codingPath.map { $0.stringValue }.joined(separator: " -> "))")
+                    @unknown default:
+                        print("   Unknown decoding error")
+                    }
                 }
                 #endif
                 throw NetworkError.decodingError(error)
@@ -173,6 +197,9 @@ actor NetworkService {
             
         default:
             let message = String(data: data, encoding: .utf8) ?? "Unknown error"
+            #if DEBUG
+            print("❌ Server error \(httpResponse.statusCode): \(message)")
+            #endif
             throw NetworkError.serverError(statusCode: httpResponse.statusCode, message: message)
         }
     }

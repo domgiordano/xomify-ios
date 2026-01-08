@@ -15,6 +15,7 @@ final class AuthService: NSObject {
     private(set) var accessToken: String?
     private(set) var refreshToken: String?
     private(set) var tokenExpirationDate: Date?
+    private(set) var userEmail: String?
     
     // MARK: - Keychain Keys
     
@@ -22,6 +23,7 @@ final class AuthService: NSObject {
         static let accessToken = "com.xomify.accessToken"
         static let refreshToken = "com.xomify.refreshToken"
         static let tokenExpiration = "com.xomify.tokenExpiration"
+        static let userEmail = "com.xomify.userEmail"
     }
     
     // MARK: - Singleton
@@ -79,6 +81,9 @@ final class AuthService: NSObject {
             // Exchange code for tokens directly with Spotify
             try await exchangeCodeForTokens(code: code)
             
+            // Fetch user profile to get email
+            try await fetchAndStoreUserEmail()
+            
             isAuthenticated = true
             
         } catch {
@@ -92,15 +97,39 @@ final class AuthService: NSObject {
         accessToken = nil
         refreshToken = nil
         tokenExpirationDate = nil
+        userEmail = nil
         isAuthenticated = false
         
         // Clear keychain
         deleteFromKeychain(key: KeychainKey.accessToken)
         deleteFromKeychain(key: KeychainKey.refreshToken)
         deleteFromKeychain(key: KeychainKey.tokenExpiration)
+        deleteFromKeychain(key: KeychainKey.userEmail)
     }
     
     // MARK: - Private Methods
+    
+    /// Fetch user email from Spotify and store it
+    private func fetchAndStoreUserEmail() async throws {
+        guard let token = accessToken else { return }
+        
+        let url = URL(string: "https://api.spotify.com/v1/me")!
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        let (data, _) = try await URLSession.shared.data(for: request)
+        
+        struct UserResponse: Codable {
+            let email: String?
+        }
+        
+        let user = try JSONDecoder().decode(UserResponse.self, from: data)
+        self.userEmail = user.email
+        
+        if let email = user.email {
+            saveToKeychain(key: KeychainKey.userEmail, value: email)
+        }
+    }
     
     /// Perform the web auth session
     @MainActor
@@ -253,6 +282,7 @@ final class AuthService: NSObject {
     private func loadTokensFromKeychain() {
         accessToken = loadFromKeychain(key: KeychainKey.accessToken)
         refreshToken = loadFromKeychain(key: KeychainKey.refreshToken)
+        userEmail = loadFromKeychain(key: KeychainKey.userEmail)
         
         if let expirationString = loadFromKeychain(key: KeychainKey.tokenExpiration),
            let interval = Double(expirationString) {

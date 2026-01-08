@@ -24,13 +24,13 @@ struct UserEnrollmentResponse: Codable {
 // MARK: - Wrapped
 
 struct MonthlyWrap: Codable, Identifiable {
-    let email: String
     let monthKey: String
     let topSongIds: TermData?
     let topArtistIds: TermData?
     let topGenres: TermGenres?
     let playlistId: String?
     let createdAt: String?
+    let email: String?  // Optional - not always present
     
     var id: String { monthKey }
     
@@ -56,28 +56,20 @@ struct MonthlyWrap: Codable, Identifiable {
         return monthKey
     }
     
+    // TermData uses snake_case keys in JSON (short_term, medium_term, long_term)
+    // convertFromSnakeCase in decoder handles this automatically
     struct TermData: Codable {
         let shortTerm: [String]?
         let mediumTerm: [String]?
         let longTerm: [String]?
-        
-        enum CodingKeys: String, CodingKey {
-            case shortTerm = "short_term"
-            case mediumTerm = "medium_term"
-            case longTerm = "long_term"
-        }
+        // No CodingKeys needed - convertFromSnakeCase handles short_term -> shortTerm
     }
     
     struct TermGenres: Codable {
         let shortTerm: [String: Int]?
         let mediumTerm: [String: Int]?
         let longTerm: [String: Int]?
-        
-        enum CodingKeys: String, CodingKey {
-            case shortTerm = "short_term"
-            case mediumTerm = "medium_term"
-            case longTerm = "long_term"
-        }
+        // No CodingKeys needed - convertFromSnakeCase handles short_term -> shortTerm
     }
 }
 
@@ -112,11 +104,15 @@ struct Release: Codable, Identifiable {
     let imageUrl: String?
     let albumType: String?
     let releaseDate: String?
-    let totalTracks: Int?
+    let totalTracks: String?
     let uri: String?
     
     var image: URL? {
         imageUrl.flatMap { URL(string: $0) }
+    }
+    
+    var totalTracksInt: Int {
+        Int(totalTracks ?? "0") ?? 0
     }
     
     var typeDisplay: String {
@@ -130,10 +126,16 @@ struct Release: Codable, Identifiable {
 }
 
 struct ReleaseStats: Codable {
-    let totalTracks: Int
-    let albumCount: Int
-    let singleCount: Int
-    let appearsOnCount: Int
+    let totalTracks: String
+    let albumCount: String
+    let singleCount: String
+    let appearsOnCount: String
+    
+    // Convenience computed properties for Int values
+    var totalTracksInt: Int { Int(totalTracks) ?? 0 }
+    var albumCountInt: Int { Int(albumCount) ?? 0 }
+    var singleCountInt: Int { Int(singleCount) ?? 0 }
+    var appearsOnCountInt: Int { Int(appearsOnCount) ?? 0 }
 }
 
 struct ReleaseRadarHistoryResponse: Codable {

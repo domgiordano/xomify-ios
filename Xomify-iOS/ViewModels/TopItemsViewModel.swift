@@ -11,6 +11,7 @@ final class TopItemsViewModel {
     
     var tracks: [SpotifyTrack] = []
     var artists: [SpotifyArtist] = []
+    var genres: [GenreCount] = []
     
     var isLoading = false
     var errorMessage: String?
@@ -20,19 +21,28 @@ final class TopItemsViewModel {
     // Cache for each time range
     private var tracksCache: [TimeRange: [SpotifyTrack]] = [:]
     private var artistsCache: [TimeRange: [SpotifyArtist]] = [:]
+    private var genresCache: [TimeRange: [GenreCount]] = [:]
     
     // MARK: - Enums
     
     enum TopItemsTab: String, CaseIterable {
         case tracks = "Tracks"
         case artists = "Artists"
+        case genres = "Genres"
         
         var icon: String {
             switch self {
             case .tracks: return "music.note.list"
             case .artists: return "person.2.fill"
+            case .genres: return "guitars.fill"
             }
         }
+    }
+    
+    struct GenreCount: Identifiable {
+        let id = UUID()
+        let name: String
+        let count: Int
     }
     
     // MARK: - Actions
@@ -40,13 +50,22 @@ final class TopItemsViewModel {
     @MainActor
     func loadData() async {
         // Check cache first
-        if selectedTab == .tracks, let cached = tracksCache[selectedTimeRange] {
-            tracks = cached
-            return
-        }
-        if selectedTab == .artists, let cached = artistsCache[selectedTimeRange] {
-            artists = cached
-            return
+        switch selectedTab {
+        case .tracks:
+            if let cached = tracksCache[selectedTimeRange] {
+                tracks = cached
+                return
+            }
+        case .artists:
+            if let cached = artistsCache[selectedTimeRange] {
+                artists = cached
+                return
+            }
+        case .genres:
+            if let cached = genresCache[selectedTimeRange] {
+                genres = cached
+                return
+            }
         }
         
         await fetchData()
@@ -74,12 +93,45 @@ final class TopItemsViewModel {
                 )
                 artists = fetchedArtists
                 artistsCache[selectedTimeRange] = fetchedArtists
+                
+                // Also compute genres from artists
+                let genreCounts = computeGenres(from: fetchedArtists)
+                genresCache[selectedTimeRange] = genreCounts
+                
+            case .genres:
+                // Genres come from artists - fetch artists first if needed
+                if let cachedArtists = artistsCache[selectedTimeRange] {
+                    genres = computeGenres(from: cachedArtists)
+                    genresCache[selectedTimeRange] = genres
+                } else {
+                    let fetchedArtists = try await spotifyService.getTopArtists(
+                        timeRange: selectedTimeRange,
+                        limit: 50
+                    )
+                    artistsCache[selectedTimeRange] = fetchedArtists
+                    genres = computeGenres(from: fetchedArtists)
+                    genresCache[selectedTimeRange] = genres
+                }
             }
         } catch {
             errorMessage = error.localizedDescription
         }
         
         isLoading = false
+    }
+    
+    private func computeGenres(from artists: [SpotifyArtist]) -> [GenreCount] {
+        var genreDict: [String: Int] = [:]
+        
+        for artist in artists {
+            for genre in artist.genres ?? [] {
+                genreDict[genre, default: 0] += 1
+            }
+        }
+        
+        return genreDict
+            .map { GenreCount(name: $0.key, count: $0.value) }
+            .sorted { $0.count > $1.count }
     }
     
     @MainActor
@@ -89,6 +141,10 @@ final class TopItemsViewModel {
         case .tracks:
             tracksCache[selectedTimeRange] = nil
         case .artists:
+            artistsCache[selectedTimeRange] = nil
+            genresCache[selectedTimeRange] = nil
+        case .genres:
+            genresCache[selectedTimeRange] = nil
             artistsCache[selectedTimeRange] = nil
         }
         await fetchData()
