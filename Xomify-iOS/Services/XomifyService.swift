@@ -33,11 +33,6 @@ actor XomifyService {
     
     // MARK: - Release Radar
     
-    /// Get current week's releases live from Spotify
-    func getReleaseRadarLive(email: String) async throws -> ReleaseRadarLiveResponse {
-        try await network.xomifyGet("/release-radar/live", queryParams: ["email": email])
-    }
-    
     /// Get release radar history from database
     func getReleaseRadarHistory(email: String, limit: Int = 26) async throws -> ReleaseRadarHistoryResponse {
         try await network.xomifyGet("/release-radar/history", queryParams: [

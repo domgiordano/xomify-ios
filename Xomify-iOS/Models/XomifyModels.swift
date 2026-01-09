@@ -20,21 +20,7 @@ struct ReleaseRadarHistoryResponse: Codable, Sendable {
     let weeks: [ReleaseRadarWeek]?
     let count: Int?
     let currentWeek: String?
-}
-
-/// Response from GET /release-radar/live
-struct ReleaseRadarLiveResponse: Codable, Sendable {
-    let email: String?
-    let weekKey: String?
-    let weekDisplay: String?
-    let startDate: String?
-    let endDate: String?
-    let releases: [ReleaseRadarRelease]?
-    let artistCount: Int?
-    let releaseCount: Int?
-    let trackCount: Int?
-    let albumCount: Int?
-    let singleCount: Int?
+    let currentWeekDisplay: String?
 }
 
 /// Response from GET /release-radar/check
@@ -151,14 +137,6 @@ struct ReleaseStats: Sendable {
         self.trackCount = releases.reduce(0) { $0 + ($1.totalTracks ?? 0) }
         self.albumCount = releases.filter { $0.albumType?.lowercased() == "album" }.count
         self.singleCount = releases.filter { $0.albumType?.lowercased() == "single" }.count
-    }
-    
-    init(from response: ReleaseRadarLiveResponse) {
-        self.artistCount = response.artistCount ?? 0
-        self.releaseCount = response.releaseCount ?? 0
-        self.trackCount = response.trackCount ?? 0
-        self.albumCount = response.albumCount ?? 0
-        self.singleCount = response.singleCount ?? 0
     }
     
     init(from stats: ReleaseRadarStats?) {

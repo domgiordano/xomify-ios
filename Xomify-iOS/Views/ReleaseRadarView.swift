@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ReleaseRadarView: View {
     @State private var viewModel = ReleaseRadarViewModel()
-    @State private var showHistoryPicker = false
+    @State private var showWeekPicker = false
     
     var body: some View {
         NavigationStack {
@@ -46,7 +46,7 @@ struct ReleaseRadarView: View {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
-                    .disabled(viewModel.isRefreshing || viewModel.showingHistory)
+                    .disabled(viewModel.isRefreshing)
                 }
             }
             .task {
@@ -56,8 +56,8 @@ struct ReleaseRadarView: View {
                 viewModel.userEmail = profileVM.email
                 await viewModel.loadData()
             }
-            .sheet(isPresented: $showHistoryPicker) {
-                historyPicker
+            .sheet(isPresented: $showWeekPicker) {
+                weekPicker
             }
         }
     }
@@ -67,7 +67,7 @@ struct ReleaseRadarView: View {
     private var weekHeader: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(viewModel.showingHistory ? "History" : "This Week")
+                Text("Week")
                     .font(.caption)
                     .foregroundColor(.gray)
                 
@@ -84,38 +84,24 @@ struct ReleaseRadarView: View {
             
             Spacer()
             
-            // Toggle buttons
-            HStack(spacing: 8) {
-                Button {
-                    viewModel.showCurrentWeek()
-                } label: {
-                    Text("Current")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(!viewModel.showingHistory ? Color.xomifyPurple : Color.white.opacity(0.1))
-                        .foregroundColor(!viewModel.showingHistory ? .white : .gray)
-                        .cornerRadius(8)
+            // Week picker button
+            Button {
+                showWeekPicker = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Change Week")
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
                 }
-                
-                Button {
-                    showHistoryPicker = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("History")
-                        Image(systemName: "chevron.down")
-                            .font(.caption2)
-                    }
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(viewModel.showingHistory ? Color.xomifyPurple : Color.white.opacity(0.1))
-                    .foregroundColor(viewModel.showingHistory ? .white : .gray)
-                    .cornerRadius(8)
-                }
+                .font(.caption)
+                .fontWeight(.medium)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.white.opacity(0.1))
+                .foregroundColor(.white)
+                .cornerRadius(8)
             }
+            .disabled(viewModel.historyWeeks.count <= 1)
         }
         .padding()
         .background(Color.xomifyCard)
@@ -247,11 +233,11 @@ struct ReleaseRadarView: View {
                 .font(.system(size: 50))
                 .foregroundColor(.gray.opacity(0.5))
             
-            Text("No Releases")
+            Text("No Releases Yet")
                 .font(.headline)
                 .foregroundColor(.white)
             
-            Text("No new releases from your followed artists this week")
+            Text("Release data is updated weekly on Saturday mornings. Check back then for new music from your followed artists!")
                 .font(.caption)
                 .foregroundColor(.gray)
                 .multilineTextAlignment(.center)
@@ -260,15 +246,15 @@ struct ReleaseRadarView: View {
         .padding(.horizontal, 40)
     }
     
-    // MARK: - History Picker
+    // MARK: - Week Picker
     
-    private var historyPicker: some View {
+    private var weekPicker: some View {
         NavigationStack {
             List {
                 ForEach(viewModel.historyWeeks) { week in
                     Button {
-                        viewModel.selectHistoryWeek(week)
-                        showHistoryPicker = false
+                        viewModel.selectWeek(week)
+                        showWeekPicker = false
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
@@ -286,11 +272,13 @@ struct ReleaseRadarView: View {
                             
                             Spacer()
                             
-                            Text("\(week.releaseCount ?? 0) releases")
-                                .font(.caption)
-                                .foregroundColor(.xomifyGreen)
+                            if let stats = week.stats {
+                                Text("\(stats.releaseCount ?? 0) releases")
+                                    .font(.caption)
+                                    .foregroundColor(.xomifyGreen)
+                            }
                             
-                            if viewModel.selectedHistoryWeek?.weekKey == week.weekKey {
+                            if viewModel.isWeekSelected(week) {
                                 Image(systemName: "checkmark")
                                     .foregroundColor(.xomifyGreen)
                             }
@@ -306,12 +294,20 @@ struct ReleaseRadarView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
-                        showHistoryPicker = false
+                        showWeekPicker = false
                     }
                 }
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - Week Release Count Extension
+
+extension ReleaseRadarWeek {
+    var releaseCount: Int? {
+        stats?.releaseCount ?? releases?.count
     }
 }
 
