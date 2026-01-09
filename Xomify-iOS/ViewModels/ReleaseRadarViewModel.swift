@@ -2,165 +2,171 @@ import Foundation
 
 /// ViewModel for Release Radar screen
 @Observable
+@MainActor
 final class ReleaseRadarViewModel {
     
     // MARK: - Properties
     
-    var selectedView: ViewMode = .current
-    var currentWeek: ReleaseRadarWeek?
-    var pastWeeks: [ReleaseRadarWeek] = []
-    var selectedWeek: ReleaseRadarWeek?
-    
     var isLoading = false
-    var isRefreshing = false
     var errorMessage: String?
+    
+    // Current week (live from Spotify)
+    var currentWeekKey: String?
+    var currentWeekDisplay: String?
+    var currentReleases: [Release] = []
+    var currentStats: ReleaseStats?
+    var currentStartDate: String?
+    var currentEndDate: String?
+    
+    // History (from database)
+    var historyWeeks: [ReleaseRadarWeek] = []
+    var selectedHistoryWeek: ReleaseRadarWeek?
+    
+    // View state
+    var showingHistory = false
+    var isRefreshing = false
+    
+    // User email (set from profile)
+    var userEmail: String?
     
     private let xomifyService = XomifyService.shared
     
-    // MARK: - Enums
-    
-    enum ViewMode: String, CaseIterable {
-        case current = "This Week"
-        case history = "History"
-    }
-    
     // MARK: - Computed
     
-    var displayedReleases: [Release] {
-        switch selectedView {
-        case .current:
-            return currentWeek?.releases ?? []
-        case .history:
-            return selectedWeek?.releases ?? []
+    var hasCurrentData: Bool {
+        !currentReleases.isEmpty
+    }
+    
+    var hasHistory: Bool {
+        !historyWeeks.isEmpty
+    }
+    
+    var displayReleases: [Release] {
+        if showingHistory, let week = selectedHistoryWeek {
+            return week.releases ?? []
         }
+        return currentReleases
     }
     
-    var displayedWeek: ReleaseRadarWeek? {
-        switch selectedView {
-        case .current:
-            return currentWeek
-        case .history:
-            return selectedWeek
+    var displayStats: ReleaseStats? {
+        if showingHistory, let week = selectedHistoryWeek {
+            return ReleaseStats(from: week.stats)
         }
+        return currentStats
     }
     
-    var stats: ReleaseStats? {
-        displayedWeek?.stats
+    var displayWeekKey: String? {
+        if showingHistory {
+            return selectedHistoryWeek?.weekKey
+        }
+        return currentWeekKey
     }
     
-    var albumCount: Int {
-        displayedReleases.filter { $0.albumType?.lowercased() == "album" }.count
+    var displayWeekName: String {
+        if showingHistory, let week = selectedHistoryWeek {
+            return week.displayName
+        }
+        return currentWeekDisplay ?? "This Week"
     }
     
-    var singleCount: Int {
-        displayedReleases.filter { $0.albumType?.lowercased() == "single" }.count
-    }
-    
-    var featureCount: Int {
-        displayedReleases.filter { $0.albumType?.lowercased() == "appears_on" }.count
+    var displayDateRange: String? {
+        if showingHistory, let week = selectedHistoryWeek {
+            return week.dateRange
+        }
+        if let start = currentStartDate, let end = currentEndDate {
+            return formatDateRange(start: start, end: end)
+        }
+        return nil
     }
     
     // MARK: - Actions
     
-    @MainActor
     func loadData() async {
+        guard let email = userEmail else {
+            errorMessage = "Please log in first"
+            return
+        }
+        
         guard !isLoading else { return }
         
         isLoading = true
         errorMessage = nil
         
-        print("🚀 ReleaseRadar: Starting loadData...")
-        
         do {
-            // Load both current and history
-            print("🚀 ReleaseRadar: Fetching live data...")
-            let live = try await xomifyService.getReleaseRadarLive()
-            print("✅ ReleaseRadar: Got live response - weekKey: \(live.weekKey), releases: \(live.week.releases.count)")
+            // Load current week live from Spotify
+            let liveResponse = try await xomifyService.getReleaseRadarLive(email: email)
+            currentWeekKey = liveResponse.weekKey
+            currentWeekDisplay = liveResponse.weekDisplay
+            currentStartDate = liveResponse.startDate
+            currentEndDate = liveResponse.endDate
+            currentReleases = liveResponse.releases ?? []
+            currentStats = ReleaseStats(from: liveResponse)
             
-            print("🚀 ReleaseRadar: Fetching history...")
-            let history = try await xomifyService.getReleaseRadarHistory(limit: 12)
-            print("✅ ReleaseRadar: Got history - \(history.weeks.count) weeks")
+            // Load history from database
+            let historyResponse = try await xomifyService.getReleaseRadarHistory(email: email)
+            historyWeeks = historyResponse.weeks ?? []
             
-            currentWeek = live.week
-            pastWeeks = history.weeks.filter { $0.weekKey != live.weekKey }
-            
-            // Select first past week by default for history view
-            if selectedWeek == nil, let first = pastWeeks.first {
-                selectedWeek = first
-            }
+            print("✅ ReleaseRadar: Loaded \(currentReleases.count) current releases, \(historyWeeks.count) history weeks")
         } catch {
-            print("❌ ReleaseRadar error: \(error)")
             errorMessage = error.localizedDescription
+            print("❌ ReleaseRadar: Error loading data - \(error)")
         }
         
         isLoading = false
     }
     
-    @MainActor
     func refresh() async {
+        guard let email = userEmail else {
+            errorMessage = "Please log in first"
+            return
+        }
+        
         guard !isRefreshing else { return }
         
         isRefreshing = true
         errorMessage = nil
         
         do {
-            let response = try await xomifyService.refreshReleaseRadar()
-            currentWeek = response.week
+            // Refresh live data from Spotify
+            let response = try await xomifyService.getReleaseRadarLive(email: email)
+            currentWeekKey = response.weekKey
+            currentWeekDisplay = response.weekDisplay
+            currentStartDate = response.startDate
+            currentEndDate = response.endDate
+            currentReleases = response.releases ?? []
+            currentStats = ReleaseStats(from: response)
+            
+            print("✅ ReleaseRadar: Refreshed with \(currentReleases.count) releases")
         } catch {
             errorMessage = error.localizedDescription
+            print("❌ ReleaseRadar: Error refreshing - \(error)")
         }
         
         isRefreshing = false
     }
     
-    @MainActor
-    func selectWeek(_ week: ReleaseRadarWeek) {
-        selectedWeek = week
+    func selectHistoryWeek(_ week: ReleaseRadarWeek) {
+        selectedHistoryWeek = week
+        showingHistory = true
     }
     
-    @MainActor
-    func onViewModeChange(_ mode: ViewMode) {
-        selectedView = mode
+    func showCurrentWeek() {
+        showingHistory = false
+        selectedHistoryWeek = nil
     }
-}
-
-// MARK: - Week Display Helpers
-
-extension ReleaseRadarWeek {
-    /// Get Sunday-Saturday date range for display
-    var dateRangeDisplay: String {
-        guard let dates = weekKeyToDates() else { return weekKey }
-        
+    
+    // MARK: - Helpers
+    
+    private func formatDateRange(start: String, end: String) -> String? {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
+        formatter.dateFormat = "yyyy-MM-dd"
         
-        let start = formatter.string(from: dates.start)
-        let end = formatter.string(from: dates.end)
+        let displayFormatter = DateFormatter()
+        displayFormatter.dateFormat = "MMM d"
         
-        return "\(start) - \(end)"
-    }
-    
-    /// Parse weekKey to actual dates
-    private func weekKeyToDates() -> (start: Date, end: Date)? {
-        let parts = weekKey.split(separator: "-")
-        guard parts.count == 2,
-              let year = Int(parts[0]),
-              let week = Int(parts[1]) else {
-            return nil
-        }
+        guard let startDate = formatter.date(from: start),
+              let endDate = formatter.date(from: end) else { return nil }
         
-        // ISO week to date conversion
-        var components = DateComponents()
-        components.weekOfYear = week
-        components.yearForWeekOfYear = year
-        components.weekday = 1 // Sunday
-        
-        guard let sunday = Calendar.current.date(from: components) else {
-            return nil
-        }
-        
-        let saturday = Calendar.current.date(byAdding: .day, value: 6, to: sunday) ?? sunday
-        
-        return (sunday, saturday)
+        return "\(displayFormatter.string(from: startDate)) - \(displayFormatter.string(from: endDate))"
     }
 }

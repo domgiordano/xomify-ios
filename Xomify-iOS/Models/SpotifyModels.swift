@@ -3,13 +3,14 @@ import Foundation
 // MARK: - User
 
 struct SpotifyUser: Codable, Identifiable, Sendable {
-    let id: String
+    let id: String?
     let displayName: String?
     let email: String?
     let images: [SpotifyImage]?
     let followers: Followers?
     let country: String?
     let product: String?
+    let externalUrls: [String: String]?
     
     var profileImageUrl: URL? {
         guard let urlString = images?.first?.url else { return nil }
@@ -34,14 +35,14 @@ struct SpotifyImage: Codable, Sendable {
 struct SpotifyTrack: Codable, Identifiable, Sendable {
     let id: String
     let name: String
-    let uri: String
+    let uri: String?
     let durationMs: Int
     let explicit: Bool?
     let popularity: Int?
     let previewUrl: String?
     let album: SpotifyAlbum?
     let artists: [SpotifyArtist]
-    let externalUrls: ExternalUrls?
+    let externalUrls: [String: String]?
     
     var imageUrl: URL? {
         guard let urlString = album?.images?.first?.url else { return nil }
@@ -71,7 +72,7 @@ struct SpotifyAlbum: Codable, Identifiable, Sendable {
     let releaseDatePrecision: String?
     let images: [SpotifyImage]?
     let artists: [SpotifyArtist]?
-    let externalUrls: ExternalUrls?
+    let externalUrls: [String: String]?
     
     var imageUrl: URL? {
         guard let urlString = images?.first?.url else { return nil }
@@ -91,14 +92,14 @@ struct SpotifyAlbum: Codable, Identifiable, Sendable {
 // MARK: - Artist
 
 struct SpotifyArtist: Codable, Identifiable, Sendable {
-    let id: String
+    let id: String?
     let name: String
     let uri: String?
     let genres: [String]?
     let popularity: Int?
     let followers: SpotifyUser.Followers?
     let images: [SpotifyImage]?
-    let externalUrls: ExternalUrls?
+    let externalUrls: [String: String]?
     
     var imageUrl: URL? {
         guard let urlString = images?.first?.url else { return nil }
@@ -118,7 +119,7 @@ struct SpotifyPlaylist: Codable, Identifiable, Sendable {
     let tracks: PlaylistTracks?
     let isPublic: Bool?
     let collaborative: Bool?
-    let externalUrls: ExternalUrls?
+    let externalUrls: [String: String]?
     
     var imageUrl: URL? {
         guard let urlString = images?.first?.url else { return nil }
@@ -131,52 +132,11 @@ struct SpotifyPlaylist: Codable, Identifiable, Sendable {
     }
     
     struct PlaylistTracks: Codable, Sendable {
-        let total: Int
-        let items: [PlaylistTrackItem]?
-    }
-    
-    struct PlaylistTrackItem: Codable, Sendable {
-        let track: SpotifyTrack?
-        let addedAt: String?
-    }
-    
-    enum CodingKeys: String, CodingKey {
-        case id, name, description, uri, images, owner, tracks, collaborative, externalUrls
-        case isPublic = "public"
+        let total: Int?
     }
 }
 
-// MARK: - External URLs
-
-struct ExternalUrls: Codable, Sendable {
-    let spotify: String?
-}
-
-// MARK: - Paging Objects
-
-struct PagingObject<T: Codable & Sendable>: Codable, Sendable {
-    let items: [T]
-    let total: Int
-    let limit: Int
-    let offset: Int
-    let next: String?
-    let previous: String?
-}
-
-struct CursorPagingObject<T: Codable & Sendable>: Codable, Sendable {
-    let items: [T]
-    let total: Int?
-    let limit: Int
-    let next: String?
-    let cursors: Cursors?
-    
-    struct Cursors: Codable, Sendable {
-        let after: String?
-        let before: String?
-    }
-}
-
-// MARK: - API Response Types
+// MARK: - Response Types
 
 struct TopTracksResponse: Codable, Sendable {
     let items: [SpotifyTrack]
@@ -193,9 +153,9 @@ struct TopArtistsResponse: Codable, Sendable {
 }
 
 struct FollowingArtistsResponse: Codable, Sendable {
-    let artists: ArtistsCursorPaging
+    let artists: ArtistsPage
     
-    struct ArtistsCursorPaging: Codable, Sendable {
+    struct ArtistsPage: Codable, Sendable {
         let items: [SpotifyArtist]
         let total: Int?
         let limit: Int
@@ -267,6 +227,13 @@ struct PlaylistSnapshotResponse: Codable, Sendable {
     enum CodingKeys: String, CodingKey {
         case snapshotId = "snapshot_id"
     }
+}
+
+struct PlaylistsResponse: Codable, Sendable {
+    let items: [SpotifyPlaylist]
+    let total: Int
+    let limit: Int
+    let offset: Int
 }
 
 // MARK: - Time Range

@@ -1,52 +1,36 @@
 import Foundation
 
-/// ViewModel for Wrapped screen
+/// ViewModel for Monthly Wrapped screen
 @Observable
+@MainActor
 final class WrappedViewModel {
     
     // MARK: - Properties
     
+    var isLoading = false
+    var errorMessage: String?
+    
+    // Available wraps
     var wraps: [MonthlyWrap] = []
     var selectedWrap: MonthlyWrap?
-    var selectedTab: WrappedTab = .tracks
     
-    // Resolved Spotify data for the selected wrap
-    var tracks: [SpotifyTrack] = []
-    var artists: [SpotifyArtist] = []
-    var genres: [GenreCount] = []
+    // Resolved data (Spotify objects)
+    var topTracks: [SpotifyTrack] = []
+    var topArtists: [SpotifyArtist] = []
+    var topGenres: [(genre: String, count: Int)] = []
     
-    var isLoading = false
-    var isLoadingDetails = false
-    var errorMessage: String?
+    // Selected term
+    var selectedTerm: TimeRange = .shortTerm
+    
+    // User email
+    var userEmail: String?
+    
+    // Cache for resolved data
+    private var trackCache: [String: SpotifyTrack] = [:]
+    private var artistCache: [String: SpotifyArtist] = [:]
     
     private let xomifyService = XomifyService.shared
     private let spotifyService = SpotifyService.shared
-    
-    // Cache resolved data per wrap
-    private var tracksCache: [String: [SpotifyTrack]] = [:]
-    private var artistsCache: [String: [SpotifyArtist]] = [:]
-    
-    // MARK: - Enums
-    
-    enum WrappedTab: String, CaseIterable {
-        case tracks = "Tracks"
-        case artists = "Artists"
-        case genres = "Genres"
-        
-        var icon: String {
-            switch self {
-            case .tracks: return "music.note.list"
-            case .artists: return "person.2.fill"
-            case .genres: return "guitars.fill"
-            }
-        }
-    }
-    
-    struct GenreCount: Identifiable {
-        let id = UUID()
-        let name: String
-        let count: Int
-    }
     
     // MARK: - Computed
     
@@ -54,129 +38,148 @@ final class WrappedViewModel {
         !wraps.isEmpty
     }
     
-    var selectedWrapDisplay: String {
-        selectedWrap?.displayName ?? "Select Month"
+    var hasSelectedWrap: Bool {
+        selectedWrap != nil
+    }
+    
+    var selectedWrapName: String {
+        selectedWrap?.displayName ?? "Select a Month"
     }
     
     // MARK: - Actions
     
-    @MainActor
     func loadWraps() async {
+        guard let email = userEmail else {
+            errorMessage = "Please log in first"
+            return
+        }
+        
         guard !isLoading else { return }
         
         isLoading = true
         errorMessage = nil
         
-        print("🚀 Wrapped: Loading wraps...")
-        
         do {
-            wraps = try await xomifyService.getWraps()
-            print("✅ Wrapped: Got \(wraps.count) wraps")
+            wraps = try await xomifyService.getWraps(email: email)
             
-            // Sort by most recent first
-            wraps.sort { $0.monthKey > $1.monthKey }
-            
-            // Select most recent wrap by default
-            if let first = wraps.first {
-                selectedWrap = first
-                isLoading = false  // Set loading false before loading details
-                await loadWrapDetails(first)
-            } else {
-                isLoading = false
+            // Auto-select most recent wrap
+            if let mostRecent = wraps.first {
+                await selectWrap(mostRecent)
             }
+            
+            print("✅ Wrapped: Loaded \(wraps.count) wraps")
         } catch {
-            print("❌ Wrapped error: \(error)")
             errorMessage = error.localizedDescription
-            isLoading = false
+            print("❌ Wrapped: Error loading wraps - \(error)")
         }
+        
+        isLoading = false
     }
     
-    @MainActor
     func selectWrap(_ wrap: MonthlyWrap) async {
-        guard selectedWrap?.monthKey != wrap.monthKey else { return }
         selectedWrap = wrap
-        await loadWrapDetails(wrap)
+        await resolveWrapData()
     }
     
-    @MainActor
-    func onTabChange(_ tab: WrappedTab) {
-        selectedTab = tab
+    func selectTerm(_ term: TimeRange) async {
+        selectedTerm = term
+        await resolveWrapData()
     }
     
-    @MainActor
-    private func loadWrapDetails(_ wrap: MonthlyWrap) async {
-        isLoadingDetails = true
+    // MARK: - Data Resolution
+    
+    private func resolveWrapData() async {
+        guard let wrap = selectedWrap else { return }
         
-        print("🚀 Wrapped: Loading details for \(wrap.monthKey)...")
+        isLoading = true
         
-        do {
-            // Get the track IDs for short_term
-            let trackIds = wrap.topSongIds?.shortTerm ?? []
-            print("   Track IDs count: \(trackIds.count)")
-            
-            // Load tracks if we have IDs and not cached
-            if !trackIds.isEmpty {
-                if let cached = tracksCache[wrap.monthKey] {
-                    tracks = cached
-                    print("✅ Wrapped: Using cached tracks (\(tracks.count))")
-                } else {
-                    print("🚀 Wrapped: Fetching \(trackIds.count) tracks from Spotify...")
-                    let fetchedTracks = try await spotifyService.getTracks(ids: trackIds)
-                    print("   Fetched \(fetchedTracks.count) tracks from Spotify")
-                    // Sort by original order
-                    tracks = trackIds.compactMap { id in
-                        fetchedTracks.first { $0.id == id }
-                    }
-                    tracksCache[wrap.monthKey] = tracks
-                    print("✅ Wrapped: Got \(tracks.count) tracks after sorting")
-                }
-            } else {
-                tracks = []
-                print("⚠️ Wrapped: No track IDs in wrap data")
-            }
-            
-            // Get the artist IDs for short_term
-            let artistIds = wrap.topArtistIds?.shortTerm ?? []
-            print("   Artist IDs count: \(artistIds.count)")
-            
-            // Load artists if we have IDs and not cached
-            if !artistIds.isEmpty {
-                if let cached = artistsCache[wrap.monthKey] {
-                    artists = cached
-                    print("✅ Wrapped: Using cached artists (\(artists.count))")
-                } else {
-                    print("🚀 Wrapped: Fetching \(artistIds.count) artists from Spotify...")
-                    let fetchedArtists = try await spotifyService.getArtists(ids: artistIds)
-                    print("   Fetched \(fetchedArtists.count) artists from Spotify")
-                    // Sort by original order
-                    artists = artistIds.compactMap { id in
-                        fetchedArtists.first { $0.id == id }
-                    }
-                    artistsCache[wrap.monthKey] = artists
-                    print("✅ Wrapped: Got \(artists.count) artists after sorting")
-                }
-            } else {
-                artists = []
-                print("⚠️ Wrapped: No artist IDs in wrap data")
-            }
-            
-            // Load genres from the wrap data
-            if let topGenres = wrap.topGenres?.shortTerm {
-                genres = topGenres
-                    .map { GenreCount(name: $0.key, count: $0.value) }
-                    .sorted { $0.count > $1.count }
-                print("✅ Wrapped: Got \(genres.count) genres")
-            } else {
-                genres = []
-                print("⚠️ Wrapped: No genre data in wrap")
-            }
-            
-        } catch {
-            print("❌ Wrapped details error: \(error)")
-            errorMessage = error.localizedDescription
+        // Resolve tracks
+        let trackIds = getTrackIds(for: selectedTerm, from: wrap)
+        topTracks = await resolveTracks(ids: trackIds)
+        
+        // Resolve artists
+        let artistIds = getArtistIds(for: selectedTerm, from: wrap)
+        topArtists = await resolveArtists(ids: artistIds)
+        
+        // Resolve genres
+        topGenres = getGenres(for: selectedTerm, from: wrap)
+        
+        isLoading = false
+    }
+    
+    private func getTrackIds(for term: TimeRange, from wrap: MonthlyWrap) -> [String] {
+        guard let termData = wrap.topSongIds else { return [] }
+        
+        switch term {
+        case .shortTerm: return termData.shortTerm ?? []
+        case .mediumTerm: return termData.mediumTerm ?? []
+        case .longTerm: return termData.longTerm ?? []
+        }
+    }
+    
+    private func getArtistIds(for term: TimeRange, from wrap: MonthlyWrap) -> [String] {
+        guard let termData = wrap.topArtistIds else { return [] }
+        
+        switch term {
+        case .shortTerm: return termData.shortTerm ?? []
+        case .mediumTerm: return termData.mediumTerm ?? []
+        case .longTerm: return termData.longTerm ?? []
+        }
+    }
+    
+    private func getGenres(for term: TimeRange, from wrap: MonthlyWrap) -> [(genre: String, count: Int)] {
+        guard let termData = wrap.topGenres else { return [] }
+        
+        let genreDict: [String: Int]?
+        switch term {
+        case .shortTerm: genreDict = termData.shortTerm
+        case .mediumTerm: genreDict = termData.mediumTerm
+        case .longTerm: genreDict = termData.longTerm
         }
         
-        isLoadingDetails = false
-        print("📊 Wrapped: Final state - tracks: \(tracks.count), artists: \(artists.count), genres: \(genres.count)")
+        guard let dict = genreDict else { return [] }
+        
+        return dict.map { ($0.key, $0.value) }
+            .sorted { $0.1 > $1.1 }
+    }
+    
+    private func resolveTracks(ids: [String]) async -> [SpotifyTrack] {
+        // Check cache first
+        let uncachedIds = ids.filter { trackCache[$0] == nil }
+        
+        if !uncachedIds.isEmpty {
+            do {
+                let tracks = try await spotifyService.getTracks(ids: uncachedIds)
+                for track in tracks {
+                    trackCache[track.id] = track
+                }
+            } catch {
+                print("❌ Wrapped: Error resolving tracks - \(error)")
+            }
+        }
+        
+        // Return in order
+        return ids.compactMap { trackCache[$0] }
+    }
+    
+    private func resolveArtists(ids: [String]) async -> [SpotifyArtist] {
+        // Check cache first
+        let uncachedIds = ids.filter { artistCache[$0] == nil }
+        
+        if !uncachedIds.isEmpty {
+            do {
+                let artists = try await spotifyService.getArtists(ids: uncachedIds)
+                for artist in artists {
+                    if let id = artist.id {
+                        artistCache[id] = artist
+                    }
+                }
+            } catch {
+                print("❌ Wrapped: Error resolving artists - \(error)")
+            }
+        }
+        
+        // Return in order
+        return ids.compactMap { artistCache[$0] }
     }
 }

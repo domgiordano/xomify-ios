@@ -16,13 +16,13 @@
 		</dict>
 		<dict/>
 	</array>
-	<key>SpotifyClientId</key>
+	<key>SPOTIFY_CLIENT_ID</key>
 	<string>$(SPOTIFY_CLIENT_ID)</string>
-	<key>SpotifyClientSecret</key>
+	<key>SPOTIFY_CLIENT_SECRET</key>
 	<string>$(SPOTIFY_CLIENT_SECRET)</string>
-	<key>XomifyApiId</key>
+	<key>XOMIFY_API_ID</key>
 	<string>$(XOMIFY_API_ID)</string>
-	<key>XomifyApiToken</key>
+	<key>XOMIFY_API_TOKEN</key>
 	<string>$(XOMIFY_API_TOKEN)</string>
 </dict>
 </plist>

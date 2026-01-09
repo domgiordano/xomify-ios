@@ -1,340 +1,274 @@
 import Foundation
 import AuthenticationServices
+import CommonCrypto
 
 /// Handles Spotify OAuth authentication
-/// Exchanges tokens directly with Spotify (same pattern as Angular app)
 @Observable
-final class AuthService: NSObject {
-    
-    // MARK: - Properties
-    
-    var isAuthenticated = false
-    var isLoading = false
-    var errorMessage: String?
-    
-    private(set) var accessToken: String?
-    private(set) var refreshToken: String?
-    private(set) var tokenExpirationDate: Date?
-    private(set) var userEmail: String?
-    
-    // MARK: - Keychain Keys
-    
-    private enum KeychainKey {
-        static let accessToken = "com.xomify.accessToken"
-        static let refreshToken = "com.xomify.refreshToken"
-        static let tokenExpiration = "com.xomify.tokenExpiration"
-        static let userEmail = "com.xomify.userEmail"
-    }
+final class AuthService: NSObject, Sendable {
     
     // MARK: - Singleton
     
     static let shared = AuthService()
     
+    // MARK: - Properties
+    
+    private(set) var accessToken: String?
+    private(set) var refreshToken: String?
+    private(set) var tokenExpirationDate: Date?
+    private(set) var isAuthenticated = false
+    
+    private var authSession: ASWebAuthenticationSession?
+    private var codeVerifier: String?
+    
+    // Config values cached at init (matching your Secrets.xcconfig keys)
+    private let clientId: String
+    private let clientSecret: String
+    private let redirectUri = "xomify://callback"
+    private let scopes: String
+    
+    // MARK: - Keychain Keys
+    
+    private let accessTokenKey = "xomify.spotify.accessToken"
+    private let refreshTokenKey = "xomify.spotify.refreshToken"
+    private let expirationKey = "xomify.spotify.expiration"
+    
+    // MARK: - Init
+    
     private override init() {
+        // Read config at init time - matching your Secrets.xcconfig variable names
+        self.clientId = Bundle.main.object(forInfoDictionaryKey: "SPOTIFY_CLIENT_ID") as? String ?? ""
+        self.clientSecret = Bundle.main.object(forInfoDictionaryKey: "SPOTIFY_CLIENT_SECRET") as? String ?? ""
+        self.scopes = [
+            "user-read-private",
+            "user-read-email",
+            "user-top-read",
+            "user-follow-read",
+            "user-follow-modify",
+            "playlist-read-private",
+            "playlist-read-collaborative",
+            "playlist-modify-public",
+            "playlist-modify-private",
+            "user-library-read"
+        ].joined(separator: " ")
+        
         super.init()
-        loadTokensFromKeychain()
+        loadTokens()
     }
     
-    // MARK: - Public Methods
+    // MARK: - Token Management
     
-    /// Check if we have a valid token
-    var hasValidToken: Bool {
-        guard let token = accessToken,
-              let expiration = tokenExpirationDate,
-              !token.isEmpty else {
-            return false
-        }
-        // Consider token invalid if it expires in less than 5 minutes
-        return expiration > Date().addingTimeInterval(300)
-    }
-    
-    /// Get a valid access token, refreshing if needed
-    func getValidAccessToken() async throws -> String {
-        // If token is still valid, return it
-        if hasValidToken, let token = accessToken {
-            return token
+    private func loadTokens() {
+        accessToken = KeychainHelper.read(key: accessTokenKey)
+        refreshToken = KeychainHelper.read(key: refreshTokenKey)
+        
+        if let expirationString = KeychainHelper.read(key: expirationKey),
+           let timestamp = Double(expirationString) {
+            tokenExpirationDate = Date(timeIntervalSince1970: timestamp)
         }
         
-        // Try to refresh
-        if let refresh = refreshToken {
-            try await refreshAccessToken(refreshToken: refresh)
-            if let token = accessToken {
-                return token
-            }
-        }
+        isAuthenticated = accessToken != nil && !isTokenExpired
         
-        throw AuthError.notAuthenticated
+        if isAuthenticated {
+            print("✅ Auth: Loaded existing session")
+        }
     }
     
-    /// Start the OAuth flow using ASWebAuthenticationSession
+    private func saveTokens(accessToken: String, refreshToken: String?, expiresIn: Int) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken ?? self.refreshToken
+        self.tokenExpirationDate = Date().addingTimeInterval(TimeInterval(expiresIn))
+        self.isAuthenticated = true
+        
+        KeychainHelper.save(key: accessTokenKey, value: accessToken)
+        if let refresh = self.refreshToken {
+            KeychainHelper.save(key: refreshTokenKey, value: refresh)
+        }
+        if let expiration = tokenExpirationDate {
+            KeychainHelper.save(key: expirationKey, value: String(expiration.timeIntervalSince1970))
+        }
+        
+        print("✅ Auth: Tokens saved, expires in \(expiresIn)s")
+    }
+    
+    private var isTokenExpired: Bool {
+        guard let expiration = tokenExpirationDate else { return true }
+        return Date() >= expiration.addingTimeInterval(-60) // 1 min buffer
+    }
+    
+    // MARK: - Login
+    
     @MainActor
     func login() async throws {
-        isLoading = true
-        errorMessage = nil
+        // Generate PKCE code verifier and challenge
+        codeVerifier = generateCodeVerifier()
+        let codeChallenge = generateCodeChallenge(from: codeVerifier!)
         
-        defer { isLoading = false }
+        // Build authorization URL
+        var components = URLComponents(string: "https://accounts.spotify.com/authorize")!
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientId),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "redirect_uri", value: redirectUri),
+            URLQueryItem(name: "scope", value: scopes),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "code_challenge", value: codeChallenge)
+        ]
         
-        do {
-            // Get authorization code
-            let code = try await performAuthSession()
-            
-            // Exchange code for tokens directly with Spotify
-            try await exchangeCodeForTokens(code: code)
-            
-            // Fetch user profile to get email
-            try await fetchAndStoreUserEmail()
-            
-            isAuthenticated = true
-            
-        } catch {
-            errorMessage = error.localizedDescription
-            throw error
-        }
-    }
-    
-    /// Clear all tokens and log out
-    func logout() {
-        accessToken = nil
-        refreshToken = nil
-        tokenExpirationDate = nil
-        userEmail = nil
-        isAuthenticated = false
-        
-        // Clear keychain
-        deleteFromKeychain(key: KeychainKey.accessToken)
-        deleteFromKeychain(key: KeychainKey.refreshToken)
-        deleteFromKeychain(key: KeychainKey.tokenExpiration)
-        deleteFromKeychain(key: KeychainKey.userEmail)
-    }
-    
-    // MARK: - Private Methods
-    
-    /// Fetch user email from Spotify and store it
-    private func fetchAndStoreUserEmail() async throws {
-        guard let token = accessToken else { return }
-        
-        let url = URL(string: "https://api.spotify.com/v1/me")!
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        
-        let (data, _) = try await URLSession.shared.data(for: request)
-        
-        struct UserResponse: Codable {
-            let email: String?
+        guard let authUrl = components.url else {
+            throw AuthError.invalidURL
         }
         
-        let user = try JSONDecoder().decode(UserResponse.self, from: data)
-        self.userEmail = user.email
+        print("🔐 Auth: Starting login flow...")
+        print("🔐 Auth: Client ID: \(clientId.prefix(8))...")
         
-        if let email = user.email {
-            saveToKeychain(key: KeychainKey.userEmail, value: email)
-        }
-    }
-    
-    /// Perform the web auth session
-    @MainActor
-    private func performAuthSession() async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(
-                url: Config.spotifyAuthUrl,
+        // Start auth session
+        let callbackUrl = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
+            authSession = ASWebAuthenticationSession(
+                url: authUrl,
                 callbackURLScheme: "xomify"
             ) { callbackURL, error in
                 if let error = error {
-                    if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
-                        continuation.resume(throwing: AuthError.userCancelled)
-                    } else {
-                        continuation.resume(throwing: AuthError.authSessionFailed(error.localizedDescription))
-                    }
-                    return
+                    continuation.resume(throwing: error)
+                } else if let url = callbackURL {
+                    continuation.resume(returning: url)
+                } else {
+                    continuation.resume(throwing: AuthError.cancelled)
                 }
-                
-                guard let callbackURL = callbackURL,
-                      let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-                      let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
-                    continuation.resume(throwing: AuthError.noAuthCode)
-                    return
-                }
-                
-                continuation.resume(returning: code)
             }
             
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = false
-            
-            if !session.start() {
-                continuation.resume(throwing: AuthError.authSessionFailed("Failed to start auth session"))
-            }
+            authSession?.presentationContextProvider = self
+            authSession?.prefersEphemeralWebBrowserSession = false
+            authSession?.start()
         }
+        
+        // Extract authorization code
+        guard let code = extractCode(from: callbackUrl) else {
+            throw AuthError.noCode
+        }
+        
+        print("🔐 Auth: Got authorization code")
+        
+        // Exchange code for tokens
+        try await exchangeCodeForTokens(code: code)
     }
     
-    /// Exchange authorization code for tokens directly with Spotify
     private func exchangeCodeForTokens(code: String) async throws {
-        let url = URL(string: "\(Config.spotifyAccountsBaseUrl)/api/token")!
+        guard let verifier = codeVerifier else {
+            throw AuthError.noCodeVerifier
+        }
         
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: URL(string: "https://accounts.spotify.com/api/token")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         
-        // Basic auth header with client_id:client_secret
-        let credentials = "\(Config.spotifyClientId):\(Config.spotifyClientSecret)"
-        let credentialsData = credentials.data(using: .utf8)!
-        let base64Credentials = credentialsData.base64EncodedString()
-        request.setValue("Basic \(base64Credentials)", forHTTPHeaderField: "Authorization")
+        let body = [
+            "grant_type=authorization_code",
+            "code=\(code)",
+            "redirect_uri=\(redirectUri)",
+            "client_id=\(clientId)",
+            "code_verifier=\(verifier)"
+        ].joined(separator: "&")
         
-        // Form body
-        let bodyParams = [
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": Config.spotifyRedirectURI.absoluteString
-        ]
-        request.httpBody = bodyParams
-            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
-            .joined(separator: "&")
-            .data(using: .utf8)
+        request.httpBody = body.data(using: .utf8)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AuthError.tokenExchangeFailed
-        }
-        
-        if httpResponse.statusCode != 200 {
-            #if DEBUG
-            if let errorJson = String(data: data, encoding: .utf8) {
-                print("❌ Token exchange failed: \(errorJson)")
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            print("❌ Auth: Token exchange failed")
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("❌ Auth: Response: \(responseString)")
             }
-            #endif
             throw AuthError.tokenExchangeFailed
         }
         
         let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
         
-        // Store tokens
-        self.accessToken = tokenResponse.accessToken
-        self.refreshToken = tokenResponse.refreshToken ?? self.refreshToken
-        self.tokenExpirationDate = Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn))
+        saveTokens(
+            accessToken: tokenResponse.accessToken,
+            refreshToken: tokenResponse.refreshToken,
+            expiresIn: tokenResponse.expiresIn
+        )
         
-        // Save to keychain
-        saveTokensToKeychain()
+        print("✅ Auth: Login successful!")
     }
     
-    /// Refresh the access token using refresh token - directly with Spotify
-    private func refreshAccessToken(refreshToken: String) async throws {
-        let url = URL(string: "\(Config.spotifyAccountsBaseUrl)/api/token")!
+    // MARK: - Refresh Token
+    
+    func refreshAccessToken() async throws {
+        guard let refresh = refreshToken else {
+            throw AuthError.noRefreshToken
+        }
         
-        var request = URLRequest(url: url)
+        print("🔄 Auth: Refreshing access token...")
+        
+        var request = URLRequest(url: URL(string: "https://accounts.spotify.com/api/token")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         
-        // Basic auth header
-        let credentials = "\(Config.spotifyClientId):\(Config.spotifyClientSecret)"
-        let credentialsData = credentials.data(using: .utf8)!
-        let base64Credentials = credentialsData.base64EncodedString()
-        request.setValue("Basic \(base64Credentials)", forHTTPHeaderField: "Authorization")
+        let body = [
+            "grant_type=refresh_token",
+            "refresh_token=\(refresh)",
+            "client_id=\(clientId)"
+        ].joined(separator: "&")
         
-        // Form body
-        let bodyParams = [
-            "grant_type": "refresh_token",
-            "refresh_token": refreshToken
-        ]
-        request.httpBody = bodyParams
-            .map { "\($0.key)=\($0.value)" }
-            .joined(separator: "&")
-            .data(using: .utf8)
+        request.httpBody = body.data(using: .utf8)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            // Refresh failed, need to re-auth
-            logout()
+              (200...299).contains(httpResponse.statusCode) else {
             throw AuthError.refreshFailed
         }
         
         let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
         
-        // Update tokens
-        self.accessToken = tokenResponse.accessToken
-        if let newRefresh = tokenResponse.refreshToken {
-            self.refreshToken = newRefresh
-        }
-        self.tokenExpirationDate = Date().addingTimeInterval(TimeInterval(tokenResponse.expiresIn))
-        self.isAuthenticated = true
+        saveTokens(
+            accessToken: tokenResponse.accessToken,
+            refreshToken: tokenResponse.refreshToken,
+            expiresIn: tokenResponse.expiresIn
+        )
         
-        // Save to keychain
-        saveTokensToKeychain()
+        print("✅ Auth: Token refreshed!")
     }
     
-    // MARK: - Keychain
+    // MARK: - Logout
     
-    private func saveTokensToKeychain() {
-        if let accessToken = accessToken {
-            saveToKeychain(key: KeychainKey.accessToken, value: accessToken)
-        }
-        if let refreshToken = refreshToken {
-            saveToKeychain(key: KeychainKey.refreshToken, value: refreshToken)
-        }
-        if let expiration = tokenExpirationDate {
-            saveToKeychain(key: KeychainKey.tokenExpiration, value: String(expiration.timeIntervalSince1970))
-        }
+    func logout() {
+        accessToken = nil
+        refreshToken = nil
+        tokenExpirationDate = nil
+        isAuthenticated = false
+        
+        KeychainHelper.delete(key: accessTokenKey)
+        KeychainHelper.delete(key: refreshTokenKey)
+        KeychainHelper.delete(key: expirationKey)
+        
+        print("👋 Auth: Logged out")
     }
     
-    private func loadTokensFromKeychain() {
-        accessToken = loadFromKeychain(key: KeychainKey.accessToken)
-        refreshToken = loadFromKeychain(key: KeychainKey.refreshToken)
-        userEmail = loadFromKeychain(key: KeychainKey.userEmail)
-        
-        if let expirationString = loadFromKeychain(key: KeychainKey.tokenExpiration),
-           let interval = Double(expirationString) {
-            tokenExpirationDate = Date(timeIntervalSince1970: interval)
+    // MARK: - PKCE Helpers
+    
+    private func generateCodeVerifier() -> String {
+        var buffer = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        return Data(buffer).base64URLEncodedString()
+    }
+    
+    private func generateCodeChallenge(from verifier: String) -> String {
+        guard let data = verifier.data(using: .utf8) else { return "" }
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes {
+            _ = CC_SHA256($0.baseAddress, CC_LONG(data.count), &hash)
         }
-        
-        // Check if we have valid tokens
-        isAuthenticated = hasValidToken || refreshToken != nil
+        return Data(hash).base64URLEncodedString()
     }
     
-    private func saveToKeychain(key: String, value: String) {
-        let data = value.data(using: .utf8)!
-        
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecValueData as String: data
-        ]
-        
-        // Delete existing item first
-        SecItemDelete(query as CFDictionary)
-        
-        // Add new item
-        SecItemAdd(query as CFDictionary, nil)
-    }
-    
-    private func loadFromKeychain(key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        
-        return value
-    }
-    
-    private func deleteFromKeychain(key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key
-        ]
-        SecItemDelete(query as CFDictionary)
+    private func extractCode(from url: URL) -> String? {
+        URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { $0.name == "code" })?
+            .value
     }
 }
 
@@ -342,17 +276,17 @@ final class AuthService: NSObject {
 
 extension AuthService: ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first else {
+        guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = windowScene.windows.first else {
             return ASPresentationAnchor()
         }
         return window
     }
 }
 
-// MARK: - Supporting Types
+// MARK: - Token Response
 
-struct TokenResponse: Codable {
+private struct TokenResponse: Codable {
     let accessToken: String
     let tokenType: String
     let expiresIn: Int
@@ -368,28 +302,82 @@ struct TokenResponse: Codable {
     }
 }
 
-enum AuthError: LocalizedError {
-    case notAuthenticated
-    case userCancelled
-    case authSessionFailed(String)
-    case noAuthCode
+// MARK: - Auth Errors
+
+enum AuthError: Error, LocalizedError {
+    case invalidURL
+    case cancelled
+    case noCode
+    case noCodeVerifier
+    case noRefreshToken
     case tokenExchangeFailed
     case refreshFailed
     
     var errorDescription: String? {
         switch self {
-        case .notAuthenticated:
-            return "Not authenticated. Please log in."
-        case .userCancelled:
-            return "Login was cancelled."
-        case .authSessionFailed(let message):
-            return "Authentication failed: \(message)"
-        case .noAuthCode:
-            return "No authorization code received."
-        case .tokenExchangeFailed:
-            return "Failed to exchange code for tokens."
-        case .refreshFailed:
-            return "Session expired. Please log in again."
+        case .invalidURL: return "Invalid authorization URL"
+        case .cancelled: return "Login was cancelled"
+        case .noCode: return "No authorization code received"
+        case .noCodeVerifier: return "Missing code verifier"
+        case .noRefreshToken: return "No refresh token available"
+        case .tokenExchangeFailed: return "Failed to exchange code for tokens"
+        case .refreshFailed: return "Failed to refresh access token"
         }
+    }
+}
+
+// MARK: - Keychain Helper
+
+enum KeychainHelper {
+    static func save(key: String, value: String) {
+        guard let data = value.data(using: .utf8) else { return }
+        
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecValueData as String: data
+        ]
+        
+        SecItemDelete(query as CFDictionary)
+        SecItemAdd(query as CFDictionary, nil)
+    }
+    
+    static func read(key: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let string = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        
+        return string
+    }
+    
+    static func delete(key: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
+// MARK: - Data Extension
+
+extension Data {
+    func base64URLEncodedString() -> String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }

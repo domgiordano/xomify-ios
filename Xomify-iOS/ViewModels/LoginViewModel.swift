@@ -29,7 +29,7 @@ final class LoginViewModel {
         
         do {
             try await authService.login()
-        } catch AuthError.userCancelled {
+        } catch AuthError.cancelled {
             // User cancelled - not an error to show
             isLoading = false
             return

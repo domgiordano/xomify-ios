@@ -11,70 +11,56 @@ actor XomifyService {
     
     private init() {}
     
-    // MARK: - User / Enrollment
+    // MARK: - User Data
     
-    /// Get user enrollment status and wraps
-    func getUserData() async throws -> WrappedDataResponse {
-        try await network.xomifyGet("/wrapped/data")
+    func getUserData(email: String) async throws -> WrappedDataResponse {
+        try await network.xomifyGet("/wrapped/data", queryParams: ["email": email])
     }
     
-    /// Get user table data
-    func getUserTableData() async throws -> XomifyUser {
-        try await network.xomifyGet("/user/user-table")
+    func getUserTableData(email: String) async throws -> XomifyUser {
+        try await network.xomifyGet("/user", queryParams: ["email": email])
     }
     
-    /// Enroll or update user
-    func updateEnrollments(
-        wrappedEnrolled: Bool,
-        releaseRadarEnrolled: Bool
-    ) async throws -> XomifyUser {
-        try await network.xomifyPost("/user/user-table", body: [
-            "wrappedEnrolled": wrappedEnrolled,
-            "releaseRadarEnrolled": releaseRadarEnrolled
+    // MARK: - Enrollments
+    
+    func updateEnrollments(email: String, activeWrapped: Bool, activeReleaseRadar: Bool) async throws {
+        let _: EmptyResponse = try await network.xomifyPost("/user/enrollments", body: [
+            "email": email,
+            "activeWrapped": activeWrapped,
+            "activeReleaseRadar": activeReleaseRadar
         ])
     }
     
     // MARK: - Release Radar
     
-    /// Get release radar history (past weeks)
-    func getReleaseRadarHistory(limit: Int = 12) async throws -> ReleaseRadarHistoryResponse {
-        try await network.xomifyGet("/release-radar/history", queryParams: ["limit": String(limit)])
+    /// Get current week's releases live from Spotify
+    func getReleaseRadarLive(email: String) async throws -> ReleaseRadarLiveResponse {
+        try await network.xomifyGet("/release-radar/live", queryParams: ["email": email])
     }
     
-    /// Get current week's releases (live)
-    func getReleaseRadarLive() async throws -> ReleaseRadarLiveResponse {
-        try await network.xomifyGet("/release-radar/live")
+    /// Get release radar history from database
+    func getReleaseRadarHistory(email: String, limit: Int = 26) async throws -> ReleaseRadarHistoryResponse {
+        try await network.xomifyGet("/release-radar/history", queryParams: [
+            "email": email,
+            "limit": String(limit)
+        ])
     }
     
-    /// Check release radar status
-    func checkReleaseRadar() async throws -> ReleaseRadarCheckResponse {
-        try await network.xomifyGet("/release-radar/check")
-    }
-    
-    /// Refresh current week (trigger re-fetch)
-    func refreshReleaseRadar() async throws -> ReleaseRadarLiveResponse {
-        try await network.xomifyPost("/release-radar/refresh", body: [:])
+    /// Check release radar enrollment status
+    func getReleaseRadarCheck(email: String) async throws -> ReleaseRadarCheckResponse {
+        try await network.xomifyGet("/release-radar/check", queryParams: ["email": email])
     }
     
     // MARK: - Wrapped
     
-    /// Get all wraps from wrapped/data endpoint
-    func getWraps() async throws -> [MonthlyWrap] {
-        let response: WrappedDataResponse = try await network.xomifyGet("/wrapped/data")
+    /// Get all user's wraps
+    func getWraps(email: String) async throws -> [MonthlyWrap] {
+        let response: WrappedDataResponse = try await network.xomifyGet("/wrapped/data", queryParams: ["email": email])
         return response.wraps ?? []
     }
     
-    /// Get specific wrap by month
-    func getWrap(monthKey: String) async throws -> MonthlyWrap {
-        try await network.xomifyGet("/wrapped/month", queryParams: ["monthKey": monthKey])
+    /// Get a specific month's wrap
+    func getWrap(email: String, monthKey: String) async throws -> MonthlyWrap {
+        try await network.xomifyGet("/wrapped/\(monthKey)", queryParams: ["email": email])
     }
-}
-
-// MARK: - Wrapped Data Response
-
-struct WrappedDataResponse: Codable {
-    let active: Bool?
-    let activeWrapped: Bool?
-    let activeReleaseRadar: Bool?
-    let wraps: [MonthlyWrap]?
 }

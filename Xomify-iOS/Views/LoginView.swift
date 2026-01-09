@@ -1,23 +1,16 @@
 import SwiftUI
 
-/// Login screen with Spotify authentication
+// MARK: - Login View
+
 struct LoginView: View {
-    
-    @State private var viewModel = LoginViewModel()
-    
-    // Xomify brand colors
-    private let primaryPurple = Color(red: 156/255, green: 10/255, blue: 191/255)
-    private let primaryGreen = Color(red: 27/255, green: 220/255, blue: 111/255)
-    private let darkBackground = Color(red: 10/255, green: 10/255, blue: 20/255)
+    @State private var isLoading = false
+    @State private var errorMessage: String?
     
     var body: some View {
         ZStack {
             // Background gradient
             LinearGradient(
-                colors: [
-                    darkBackground,
-                    Color(red: 26/255, green: 26/255, blue: 46/255)
-                ],
+                colors: [Color.xomifyDark, Color(red: 18/255, green: 18/255, blue: 37/255)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -26,36 +19,15 @@ struct LoginView: View {
             VStack(spacing: 40) {
                 Spacer()
                 
-                // Logo and title
-                VStack(spacing: 20) {
-                    // Logo placeholder - replace with your actual logo
-                    ZStack {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [primaryPurple, primaryGreen],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 120, height: 120)
-                        
-                        Text("X")
-                            .font(.system(size: 60, weight: .bold, design: .rounded))
-                            .foregroundColor(.white)
-                    }
+                // Logo section - using your "banner-logo" asset
+                VStack(spacing: 24) {
+                    Image("banner-logo")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: 280)
+                        .shadow(color: .xomifyPurple.opacity(0.5), radius: 20)
                     
-                    Text("XOMIFY")
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [primaryPurple, primaryGreen],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                    
-                    Text("Your Music. Your Stats.")
+                    Text("Your Music, Your Stats")
                         .font(.subheadline)
                         .foregroundColor(.gray)
                 }
@@ -65,42 +37,49 @@ struct LoginView: View {
                 // Login button
                 VStack(spacing: 16) {
                     Button {
-                        Task {
-                            await viewModel.login()
-                        }
+                        login()
                     } label: {
                         HStack(spacing: 12) {
-                            if viewModel.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            if isLoading {
+                                ProgressView().tint(.white)
                             } else {
                                 Image(systemName: "music.note")
-                                    .font(.title2)
+                                Text("Connect with Spotify")
                             }
-                            
-                            Text(viewModel.isLoading ? "Connecting..." : "Continue with Spotify")
-                                .font(.headline)
                         }
+                        .font(.headline)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color(red: 30/255, green: 215/255, blue: 96/255)) // Spotify green
-                        .foregroundColor(.black)
+                        .padding()
+                        .background(Color(red: 29/255, green: 185/255, blue: 84/255))
+                        .foregroundColor(.white)
                         .cornerRadius(30)
                     }
-                    .disabled(viewModel.isLoading)
+                    .disabled(isLoading)
                     
-                    Text("We'll never post without your permission")
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                    if let error = errorMessage {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .multilineTextAlignment(.center)
+                    }
                 }
                 .padding(.horizontal, 32)
                 .padding(.bottom, 60)
             }
         }
-        .alert("Login Failed", isPresented: $viewModel.showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(viewModel.errorMessage ?? "An unknown error occurred")
+    }
+    
+    private func login() {
+        isLoading = true
+        errorMessage = nil
+        
+        Task {
+            do {
+                try await AuthService.shared.login()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isLoading = false
         }
     }
 }
