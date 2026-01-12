@@ -126,14 +126,26 @@ struct TopItemsView: View {
                 .foregroundColor(.xomifyGreen)
                 .frame(width: 30)
             
-            // Album art
-            AsyncImage(url: track.imageUrl) { image in
-                image.resizable()
-            } placeholder: {
-                Rectangle().fill(Color.gray.opacity(0.3))
+            // Album art - tap to go to album
+            if let album = track.album {
+                NavigationLink(destination: AlbumView(albumId: album.id)) {
+                    AsyncImage(url: track.imageUrl) { image in
+                        image.resizable()
+                    } placeholder: {
+                        Rectangle().fill(Color.gray.opacity(0.3))
+                    }
+                    .frame(width: 50, height: 50)
+                    .cornerRadius(6)
+                }
+            } else {
+                AsyncImage(url: track.imageUrl) { image in
+                    image.resizable()
+                } placeholder: {
+                    Rectangle().fill(Color.gray.opacity(0.3))
+                }
+                .frame(width: 50, height: 50)
+                .cornerRadius(6)
             }
-            .frame(width: 50, height: 50)
-            .cornerRadius(6)
             
             // Track info
             VStack(alignment: .leading, spacing: 4) {
@@ -143,10 +155,20 @@ struct TopItemsView: View {
                     .foregroundColor(.white)
                     .lineLimit(1)
                 
-                Text(track.artistNames)
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
+                // Artist names - tap to go to first artist
+                if let firstArtist = track.artists.first, let artistId = firstArtist.id {
+                    NavigationLink(destination: ArtistView(artistId: artistId)) {
+                        Text(track.artistNames)
+                            .font(.caption)
+                            .foregroundColor(.xomifyPurple)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(track.artistNames)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                }
             }
             
             Spacer()
@@ -155,6 +177,15 @@ struct TopItemsView: View {
             Text(track.duration)
                 .font(.caption)
                 .foregroundColor(.gray)
+            
+            // Play button
+            Button {
+                playTrack(track)
+            } label: {
+                Image(systemName: "play.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.xomifyGreen)
+            }
         }
         .padding(12)
         .background(Color.white.opacity(0.03))
@@ -179,55 +210,62 @@ struct TopItemsView: View {
     }
     
     private func artistRow(_ artist: SpotifyArtist, rank: Int) -> some View {
-        HStack(spacing: 12) {
-            // Rank
-            Text("\(rank)")
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundColor(.xomifyPurple)
-                .frame(width: 30)
-            
-            // Artist image
-            AsyncImage(url: artist.imageUrl) { image in
-                image.resizable()
-            } placeholder: {
-                Circle().fill(Color.gray.opacity(0.3))
-            }
-            .frame(width: 50, height: 50)
-            .clipShape(Circle())
-            
-            // Artist info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(artist.name)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.white)
-                    .lineLimit(1)
+        NavigationLink(destination: ArtistView(artistId: artist.id ?? "")) {
+            HStack(spacing: 12) {
+                // Rank
+                Text("\(rank)")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.xomifyPurple)
+                    .frame(width: 30)
                 
-                if let genres = artist.genres, !genres.isEmpty {
-                    Text(genres.prefix(2).joined(separator: ", "))
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                // Artist image
+                AsyncImage(url: artist.imageUrl) { image in
+                    image.resizable()
+                } placeholder: {
+                    Circle().fill(Color.gray.opacity(0.3))
+                }
+                .frame(width: 50, height: 50)
+                .clipShape(Circle())
+                
+                // Artist info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(artist.name)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.white)
                         .lineLimit(1)
+                    
+                    if let genres = artist.genres, !genres.isEmpty {
+                        Text(genres.prefix(2).joined(separator: ", "))
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                            .lineLimit(1)
+                    }
                 }
-            }
-            
-            Spacer()
-            
-            // Popularity
-            if let popularity = artist.popularity {
-                HStack(spacing: 4) {
-                    Image(systemName: "star.fill")
-                        .font(.caption2)
-                    Text("\(popularity)")
-                        .font(.caption)
+                
+                Spacer()
+                
+                // Popularity
+                if let popularity = artist.popularity {
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill")
+                            .font(.caption2)
+                        Text("\(popularity)")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.yellow.opacity(0.8))
                 }
-                .foregroundColor(.yellow.opacity(0.8))
+                
+                // Chevron
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.gray)
             }
+            .padding(12)
+            .background(Color.white.opacity(0.03))
+            .cornerRadius(10)
         }
-        .padding(12)
-        .background(Color.white.opacity(0.03))
-        .cornerRadius(10)
     }
     
     // MARK: - Genres Content
@@ -295,6 +333,17 @@ struct TopItemsView: View {
         .padding(12)
         .background(Color.white.opacity(0.03))
         .cornerRadius(10)
+    }
+    
+    // MARK: - Playback
+    
+    private func playTrack(_ track: SpotifyTrack) {
+        // Open in Spotify app via URI (best experience)
+        if let uri = track.uri, let url = URL(string: uri) {
+            UIApplication.shared.open(url)
+        } else if let urlString = track.externalUrls?["spotify"], let url = URL(string: urlString) {
+            UIApplication.shared.open(url)
+        }
     }
 }
 

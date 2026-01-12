@@ -26,6 +26,13 @@ final class AuthService: NSObject, Sendable {
     private let redirectUri = "xomify://callback"
     private let scopes: String
     
+    // Xomify API config
+    private let xomifyApiId: String
+    private let xomifyApiToken: String
+    private var xomifyApiUrl: String {
+        "https://\(xomifyApiId).execute-api.us-east-1.amazonaws.com/dev"
+    }
+    
     // MARK: - Keychain Keys
     
     private let accessTokenKey = "xomify.spotify.accessToken"
@@ -38,17 +45,25 @@ final class AuthService: NSObject, Sendable {
         // Read config at init time - matching your Secrets.xcconfig variable names
         self.clientId = Bundle.main.object(forInfoDictionaryKey: "SPOTIFY_CLIENT_ID") as? String ?? ""
         self.clientSecret = Bundle.main.object(forInfoDictionaryKey: "SPOTIFY_CLIENT_SECRET") as? String ?? ""
+        self.xomifyApiId = Bundle.main.object(forInfoDictionaryKey: "XOMIFY_API_ID") as? String ?? ""
+        self.xomifyApiToken = Bundle.main.object(forInfoDictionaryKey: "XOMIFY_API_TOKEN") as? String ?? ""
+        
+        // Match web scopes exactly for feature parity
         self.scopes = [
             "user-read-private",
             "user-read-email",
+            "user-library-read",
             "user-top-read",
-            "user-follow-read",
-            "user-follow-modify",
-            "playlist-read-private",
-            "playlist-read-collaborative",
             "playlist-modify-public",
             "playlist-modify-private",
-            "user-library-read"
+            "playlist-read-private",
+            "playlist-read-collaborative",
+            "ugc-image-upload",
+            "user-follow-read",
+            "user-follow-modify",
+            "user-modify-playback-state",
+            "user-read-playback-state",
+            "streaming"
         ].joined(separator: " ")
         
         super.init()
@@ -87,7 +102,7 @@ final class AuthService: NSObject, Sendable {
             KeychainHelper.save(key: expirationKey, value: String(expiration.timeIntervalSince1970))
         }
         
-        print("✅ Auth: Tokens saved, expires in \(expiresIn)s")
+        print("✅ Auth: Tokens saved to Keychain, expires in \(expiresIn)s")
     }
     
     private var isTokenExpired: Bool {
@@ -184,6 +199,7 @@ final class AuthService: NSObject, Sendable {
         
         let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
         
+        // Save tokens locally
         saveTokens(
             accessToken: tokenResponse.accessToken,
             refreshToken: tokenResponse.refreshToken,
@@ -191,6 +207,92 @@ final class AuthService: NSObject, Sendable {
         )
         
         print("✅ Auth: Login successful!")
+        
+        // Save refresh token to Xomify backend for cron jobs
+        // This happens async - don't block login on it
+        Task {
+            await saveRefreshTokenToXomify()
+        }
+    }
+    
+    // MARK: - Save Refresh Token to Xomify Backend
+    
+    /// Saves the refresh token to Xomify's DynamoDB so cron jobs can process this user
+    func saveRefreshTokenToXomify() async {
+        guard let refresh = refreshToken,
+              let access = accessToken else {
+            print("⚠️ Auth: No tokens to save to Xomify")
+            return
+        }
+        
+        // First, get user profile from Spotify to get email/userId
+        guard let userProfile = await fetchSpotifyUserProfile() else {
+            print("❌ Auth: Could not fetch Spotify profile to save to Xomify")
+            return
+        }
+        
+        print("📤 Auth: Saving refresh token to Xomify backend...")
+        
+        let url = URL(string: "\(xomifyApiUrl)/user/user-table")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(xomifyApiToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any] = [
+            "email": userProfile.email,
+            "userId": userProfile.id,
+            "displayName": userProfile.displayName ?? userProfile.email,
+            "refreshToken": refresh
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse,
+               (200...299).contains(httpResponse.statusCode) {
+                print("✅ Auth: Refresh token saved to Xomify backend!")
+                
+                // Parse response to get enrollment status
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    let wrappedEnrolled = json["activeWrapped"] as? Bool ?? false
+                    let radarEnrolled = json["activeReleaseRadar"] as? Bool ?? false
+                    print("   Wrapped enrolled: \(wrappedEnrolled)")
+                    print("   Release Radar enrolled: \(radarEnrolled)")
+                }
+            } else {
+                print("❌ Auth: Failed to save refresh token to Xomify")
+                if let responseString = String(data: data, encoding: .utf8) {
+                    print("   Response: \(responseString)")
+                }
+            }
+        } catch {
+            print("❌ Auth: Error saving refresh token to Xomify: \(error)")
+        }
+    }
+    
+    /// Fetches the current user's Spotify profile
+    private func fetchSpotifyUserProfile() async -> SpotifyUserProfile? {
+        guard let access = accessToken else { return nil }
+        
+        var request = URLRequest(url: URL(string: "https://api.spotify.com/v1/me")!)
+        request.setValue("Bearer \(access)", forHTTPHeaderField: "Authorization")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                return nil
+            }
+            
+            return try JSONDecoder().decode(SpotifyUserProfile.self, from: data)
+        } catch {
+            print("❌ Auth: Error fetching Spotify profile: \(error)")
+            return nil
+        }
     }
     
     // MARK: - Refresh Token
@@ -230,6 +332,13 @@ final class AuthService: NSObject, Sendable {
         )
         
         print("✅ Auth: Token refreshed!")
+        
+        // Also update Xomify backend if we got a new refresh token
+        if tokenResponse.refreshToken != nil {
+            Task {
+                await saveRefreshTokenToXomify()
+            }
+        }
     }
     
     // MARK: - Logout
@@ -299,6 +408,20 @@ private struct TokenResponse: Codable {
         case expiresIn = "expires_in"
         case refreshToken = "refresh_token"
         case scope
+    }
+}
+
+// MARK: - Spotify User Profile (for saving to Xomify)
+
+private struct SpotifyUserProfile: Codable {
+    let id: String
+    let email: String
+    let displayName: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case email
+        case displayName = "display_name"
     }
 }
 

@@ -72,8 +72,9 @@ final class ReleaseRadarViewModel {
     // MARK: - Actions
     
     func loadData() async {
-        guard let email = userEmail else {
+        guard let email = userEmail, !email.isEmpty else {
             errorMessage = "Please log in first"
+            print("❌ ReleaseRadar: No email provided")
             return
         }
         
@@ -82,11 +83,29 @@ final class ReleaseRadarViewModel {
         isLoading = true
         errorMessage = nil
         
+        print("📡 ReleaseRadar: Loading history for \(email)...")
+        
         do {
             let response = try await xomifyService.getReleaseRadarHistory(email: email)
+            
+            print("✅ ReleaseRadar: Got response")
+            print("   - weeks count: \(response.weeks?.count ?? 0)")
+            print("   - currentWeek: \(response.currentWeek ?? "nil")")
+            
             historyWeeks = response.weeks ?? []
             currentWeekKey = response.currentWeek
             currentWeekDisplay = response.currentWeekDisplay
+            
+            // Debug: log first week's releases
+            if let firstWeek = historyWeeks.first {
+                print("   - First week: \(firstWeek.weekKey)")
+                print("   - Releases count: \(firstWeek.releases?.count ?? 0)")
+                if let releases = firstWeek.releases {
+                    for (i, release) in releases.prefix(3).enumerated() {
+                        print("     [\(i)] albumId: \(release.albumId ?? "nil"), name: \(release.displayName)")
+                    }
+                }
+            }
             
             // Select first week by default
             if selectedWeek == nil, let firstWeek = historyWeeks.first {
@@ -97,6 +116,22 @@ final class ReleaseRadarViewModel {
         } catch {
             errorMessage = error.localizedDescription
             print("❌ ReleaseRadar: Error - \(error)")
+            
+            // More detailed error logging
+            if let decodingError = error as? DecodingError {
+                switch decodingError {
+                case .keyNotFound(let key, let context):
+                    print("   Key '\(key.stringValue)' not found: \(context.debugDescription)")
+                case .typeMismatch(let type, let context):
+                    print("   Type mismatch for \(type): \(context.debugDescription)")
+                case .valueNotFound(let type, let context):
+                    print("   Value not found for \(type): \(context.debugDescription)")
+                case .dataCorrupted(let context):
+                    print("   Data corrupted: \(context.debugDescription)")
+                @unknown default:
+                    print("   Unknown decoding error")
+                }
+            }
         }
         
         isLoading = false
@@ -108,6 +143,8 @@ final class ReleaseRadarViewModel {
         
         isRefreshing = true
         errorMessage = nil
+        
+        print("🔄 ReleaseRadar: Refreshing for \(email)...")
         
         do {
             let response = try await xomifyService.getReleaseRadarHistory(email: email)
@@ -124,7 +161,7 @@ final class ReleaseRadarViewModel {
                 selectedWeek = firstWeek
             }
             
-            print("✅ ReleaseRadar: Refreshed")
+            print("✅ ReleaseRadar: Refreshed - \(historyWeeks.count) weeks")
         } catch {
             errorMessage = error.localizedDescription
             print("❌ ReleaseRadar: Refresh error - \(error)")
@@ -135,5 +172,6 @@ final class ReleaseRadarViewModel {
     
     func selectWeek(_ week: ReleaseRadarWeek) {
         selectedWeek = week
+        print("📅 ReleaseRadar: Selected week \(week.weekKey) with \(week.releases?.count ?? 0) releases")
     }
 }

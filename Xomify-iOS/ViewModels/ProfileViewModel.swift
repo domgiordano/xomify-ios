@@ -12,6 +12,10 @@ final class ProfileViewModel {
     var isLoading = false
     var errorMessage: String?
     
+    // Counts
+    var followingCount = 0
+    var playlistCount = 0
+    
     // Enrollment states
     var isWrappedEnrolled = false
     var isReleaseRadarEnrolled = false
@@ -74,10 +78,16 @@ final class ProfileViewModel {
             // Load Spotify user
             user = try await spotifyService.getCurrentUser()
             
+            // Load following count
+            let followedArtists = try await spotifyService.getFollowedArtists()
+            followingCount = followedArtists.count
+            
             // Load Xomify enrollment status
             if let email = user?.email {
                 await loadXomifyStatus(email: email)
             }
+            
+            print("✅ Profile: Loaded - \(displayName), following \(followingCount) artists")
         } catch {
             errorMessage = error.localizedDescription
             print("❌ Profile: Error loading profile - \(error)")
