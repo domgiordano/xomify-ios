@@ -3,6 +3,9 @@ import SwiftUI
 struct ReleaseRadarView: View {
     @State private var viewModel = ReleaseRadarViewModel()
     @State private var showWeekPicker = false
+    @State private var isLoadingUser = true
+    
+    private let spotifyService = SpotifyService.shared
     
     var body: some View {
         NavigationStack {
@@ -17,14 +20,21 @@ struct ReleaseRadarView: View {
                 
                 // Content
                 ScrollView {
-                    if viewModel.isLoading {
-                        ProgressView()
-                            .padding(.top, 60)
+                    if isLoadingUser || viewModel.isLoading {
+                        VStack(spacing: 12) {
+                            ProgressView()
+                            Text(isLoadingUser ? "Loading profile..." : "Loading releases...")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.top, 60)
+                    } else if let error = viewModel.errorMessage {
+                        errorState(error)
                     } else if viewModel.displayReleases.isEmpty {
                         emptyState
                     } else {
                         LazyVStack(spacing: 12) {
-                            ForEach(viewModel.displayReleases) { release in
+                            ForEach(viewModel.displayReleases, id: \.stableId) { release in
                                 releaseCard(release)
                             }
                         }
@@ -46,20 +56,44 @@ struct ReleaseRadarView: View {
                             Image(systemName: "arrow.clockwise")
                         }
                     }
-                    .disabled(viewModel.isRefreshing)
+                    .disabled(viewModel.isRefreshing || isLoadingUser)
                 }
             }
             .task {
-                // Get email from profile and load data
-                let profileVM = ProfileViewModel()
-                await profileVM.loadProfile()
-                viewModel.userEmail = profileVM.email
-                await viewModel.loadData()
+                await loadUserAndData()
             }
             .sheet(isPresented: $showWeekPicker) {
                 weekPicker
             }
         }
+    }
+    
+    // MARK: - Load User and Data
+    
+    private func loadUserAndData() async {
+        isLoadingUser = true
+        
+        do {
+            // Get email directly from Spotify API - don't create a new ProfileViewModel
+            let user = try await spotifyService.getCurrentUser()
+            
+            guard let email = user.email, !email.isEmpty else {
+                viewModel.errorMessage = "Could not get email from Spotify"
+                isLoadingUser = false
+                return
+            }
+            
+            viewModel.userEmail = email
+            print("📧 ReleaseRadar: Got email: \(email)")
+            
+            // Now load release radar data
+            await viewModel.loadData()
+        } catch {
+            print("❌ ReleaseRadar: Failed to get user: \(error)")
+            viewModel.errorMessage = "Failed to load user profile: \(error.localizedDescription)"
+        }
+        
+        isLoadingUser = false
     }
     
     // MARK: - Week Header
@@ -140,27 +174,61 @@ struct ReleaseRadarView: View {
     
     private func releaseCard(_ release: Release) -> some View {
         HStack(spacing: 14) {
-            // Album art
-            AsyncImage(url: release.image) { image in
-                image.resizable()
-            } placeholder: {
-                Rectangle().fill(Color.gray.opacity(0.3))
+            // Album art - tap to go to album
+            if let albumId = release.albumId ?? release.id {
+                NavigationLink(destination: AlbumView(albumId: albumId)) {
+                    AsyncImage(url: release.image) { image in
+                        image.resizable()
+                    } placeholder: {
+                        Rectangle().fill(Color.gray.opacity(0.3))
+                    }
+                    .frame(width: 70, height: 70)
+                    .cornerRadius(8)
+                }
+            } else {
+                AsyncImage(url: release.image) { image in
+                    image.resizable()
+                } placeholder: {
+                    Rectangle().fill(Color.gray.opacity(0.3))
+                }
+                .frame(width: 70, height: 70)
+                .cornerRadius(8)
             }
-            .frame(width: 70, height: 70)
-            .cornerRadius(8)
             
             // Release info
             VStack(alignment: .leading, spacing: 6) {
-                Text(release.albumName ?? "Unknown Album")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.white)
-                    .lineLimit(2)
+                // Album name - tap to go to album
+                if let albumId = release.albumId ?? release.id {
+                    NavigationLink(destination: AlbumView(albumId: albumId)) {
+                        Text(release.displayName)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                } else {
+                    Text(release.displayName)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                }
                 
-                Text(release.artistName ?? "Unknown Artist")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
+                // Artist name - tap to go to artist
+                if let artistId = release.artistId {
+                    NavigationLink(destination: ArtistView(artistId: artistId)) {
+                        Text(release.displayArtist)
+                            .font(.caption)
+                            .foregroundColor(.xomifyPurple)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text(release.displayArtist)
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                        .lineLimit(1)
+                }
                 
                 HStack(spacing: 8) {
                     // Album type badge
@@ -193,18 +261,27 @@ struct ReleaseRadarView: View {
             
             Spacer()
             
-            // Spotify link
-            if let url = release.spotify {
-                Link(destination: url) {
-                    Image(systemName: "play.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.green)
-                }
+            // Play button - opens in Spotify
+            Button {
+                playRelease(release)
+            } label: {
+                Image(systemName: "play.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.xomifyGreen)
             }
         }
         .padding(12)
         .background(Color.xomifyCard)
         .cornerRadius(12)
+    }
+    
+    private func playRelease(_ release: Release) {
+        // Try URI first (opens directly in Spotify app)
+        if let uri = release.uri, let url = URL(string: uri) {
+            UIApplication.shared.open(url)
+        } else if let url = release.spotify {
+            UIApplication.shared.open(url)
+        }
     }
     
     private func badgeColor(for type: String) -> Color {
@@ -223,6 +300,40 @@ struct ReleaseRadarView: View {
         
         formatter.dateFormat = "MMM d"
         return formatter.string(from: date)
+    }
+    
+    // MARK: - Error State
+    
+    private func errorState(_ message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 50))
+                .foregroundColor(.orange.opacity(0.7))
+            
+            Text("Error Loading Data")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+            
+            Button {
+                Task { await loadUserAndData() }
+            } label: {
+                Text("Try Again")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(Color.xomifyPurple)
+                    .foregroundColor(.white)
+                    .cornerRadius(20)
+            }
+        }
+        .padding(.top, 60)
+        .padding(.horizontal, 40)
     }
     
     // MARK: - Empty State

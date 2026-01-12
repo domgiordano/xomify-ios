@@ -76,17 +76,48 @@ struct ReleaseRadarWeek: Codable, Identifiable, Sendable {
 }
 
 /// Stats stored with each week in DynamoDB
+/// Note: DynamoDB returns numbers as strings, so we decode as String and convert
 struct ReleaseRadarStats: Codable, Sendable {
     let artistCount: Int?
     let releaseCount: Int?
     let trackCount: Int?
     let albumCount: Int?
     let singleCount: Int?
+    
+    // Custom decoding to handle string numbers from DynamoDB
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        artistCount = Self.decodeIntOrString(from: container, key: .artistCount)
+        releaseCount = Self.decodeIntOrString(from: container, key: .releaseCount)
+        trackCount = Self.decodeIntOrString(from: container, key: .trackCount)
+        albumCount = Self.decodeIntOrString(from: container, key: .albumCount)
+        singleCount = Self.decodeIntOrString(from: container, key: .singleCount)
+    }
+    
+    private static func decodeIntOrString(from container: KeyedDecodingContainer<CodingKeys>, key: CodingKeys) -> Int? {
+        // Try Int first
+        if let intValue = try? container.decode(Int.self, forKey: key) {
+            return intValue
+        }
+        // Fall back to String and convert
+        if let stringValue = try? container.decode(String.self, forKey: key) {
+            return Int(stringValue)
+        }
+        return nil
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case artistCount, releaseCount, trackCount, albumCount, singleCount
+    }
 }
 
 /// A single release (album/single/EP)
+/// Note: All fields are optional to handle varying API responses
+/// DynamoDB returns numbers as strings, so totalTracks needs special handling
 struct ReleaseRadarRelease: Codable, Identifiable, Sendable {
-    let albumId: String
+    // Primary identifier - try albumId first, fall back to id
+    let albumId: String?
     let albumName: String?
     let albumType: String?
     let artistId: String?
@@ -97,7 +128,49 @@ struct ReleaseRadarRelease: Codable, Identifiable, Sendable {
     let spotifyUrl: String?
     let uri: String?
     
-    var id: String { albumId }
+    // Fallback fields (in case API uses different names)
+    let id: String?
+    let name: String?
+    
+    // Custom decoding to handle totalTracks as string or int
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        albumId = try container.decodeIfPresent(String.self, forKey: .albumId)
+        albumName = try container.decodeIfPresent(String.self, forKey: .albumName)
+        albumType = try container.decodeIfPresent(String.self, forKey: .albumType)
+        artistId = try container.decodeIfPresent(String.self, forKey: .artistId)
+        artistName = try container.decodeIfPresent(String.self, forKey: .artistName)
+        releaseDate = try container.decodeIfPresent(String.self, forKey: .releaseDate)
+        imageUrl = try container.decodeIfPresent(String.self, forKey: .imageUrl)
+        spotifyUrl = try container.decodeIfPresent(String.self, forKey: .spotifyUrl)
+        uri = try container.decodeIfPresent(String.self, forKey: .uri)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        
+        // Handle totalTracks as Int or String
+        if let intValue = try? container.decode(Int.self, forKey: .totalTracks) {
+            totalTracks = intValue
+        } else if let stringValue = try? container.decode(String.self, forKey: .totalTracks) {
+            totalTracks = Int(stringValue)
+        } else {
+            totalTracks = nil
+        }
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case albumId, albumName, albumType, artistId, artistName
+        case releaseDate, totalTracks, imageUrl, spotifyUrl, uri
+        case id, name
+    }
+    
+    // Identifiable conformance - use albumId or fall back to id
+    var identifier: String {
+        albumId ?? id ?? UUID().uuidString
+    }
+    
+    // For ForEach - use computed identifier
+    // Note: Can't use 'id' directly as it conflicts with the optional 'id' property
     
     var image: URL? {
         guard let urlString = imageUrl else { return nil }
@@ -107,6 +180,24 @@ struct ReleaseRadarRelease: Codable, Identifiable, Sendable {
     var spotify: URL? {
         guard let urlString = spotifyUrl else { return nil }
         return URL(string: urlString)
+    }
+    
+    /// Get display name - try albumName first, fall back to name
+    var displayName: String {
+        albumName ?? name ?? "Unknown Album"
+    }
+    
+    /// Get display artist
+    var displayArtist: String {
+        artistName ?? "Unknown Artist"
+    }
+}
+
+// Extend to provide proper Identifiable id
+extension ReleaseRadarRelease {
+    // This creates a stable id for ForEach
+    var stableId: String {
+        albumId ?? id ?? UUID().uuidString
     }
 }
 

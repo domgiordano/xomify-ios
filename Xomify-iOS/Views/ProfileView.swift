@@ -74,7 +74,11 @@ struct ProfileView: View {
     private var statsSection: some View {
         HStack(spacing: 16) {
             statCard(title: "Followers", value: "\(viewModel.followersCount)", icon: "person.2.fill", color: .xomifyPurple)
-            statCard(title: "Account", value: viewModel.accountType, icon: "star.fill", color: .xomifyGreen)
+            
+            // Following - navigates to FollowingView
+            NavigationLink(destination: FollowingView()) {
+                statCardContent(title: "Following", value: "\(viewModel.followingCount)", icon: "heart.fill", color: .xomifyGreen)
+            }
         }
     }
     
@@ -90,15 +94,44 @@ struct ProfileView: View {
         .cornerRadius(16)
     }
     
+    private func statCardContent(title: String, value: String, icon: String, color: Color) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon).font(.title2).foregroundColor(color)
+            Text(value).font(.title2).fontWeight(.bold).foregroundColor(.white)
+            Text(title).font(.caption).foregroundColor(.gray)
+            
+            // Subtle indicator that it's tappable
+            HStack(spacing: 4) {
+                Text("View")
+                    .font(.caption2)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8))
+            }
+            .foregroundColor(color.opacity(0.7))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+        .background(Color.xomifyCard)
+        .cornerRadius(16)
+    }
+    
     private var quickStatsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Your Listening").font(.headline).foregroundColor(.white)
             Text("Quick overview of your music taste").font(.caption).foregroundColor(.gray)
             
             VStack(spacing: 12) {
-                quickStatRow(title: "Top Songs", subtitle: "View your most played tracks", icon: "music.note", iconColor: .xomifyPurple)
-                quickStatRow(title: "Top Artists", subtitle: "Discover your favorite artists", icon: "person.2.fill", iconColor: .xomifyGreen)
-                quickStatRow(title: "Top Genres", subtitle: "See what styles you love", icon: "guitars.fill", iconColor: .blue)
+                NavigationLink(destination: TopItemsView()) {
+                    quickStatRow(title: "Top Songs", subtitle: "View your most played tracks", icon: "music.note", iconColor: .xomifyPurple)
+                }
+                
+                NavigationLink(destination: TopItemsView()) {
+                    quickStatRow(title: "Top Artists", subtitle: "Discover your favorite artists", icon: "person.2.fill", iconColor: .xomifyGreen)
+                }
+                
+                NavigationLink(destination: TopItemsView()) {
+                    quickStatRow(title: "Top Genres", subtitle: "See what styles you love", icon: "guitars.fill", iconColor: .blue)
+                }
             }
         }
     }
@@ -127,26 +160,30 @@ struct ProfileView: View {
             Text("Enhance your Xomify experience").font(.caption).foregroundColor(.gray)
             
             VStack(spacing: 16) {
-                enrollmentCard(
-                    title: "Monthly Wrapped",
-                    description: "Get monthly insights about your listening habits and track your music taste over time.",
-                    icon: "chart.bar.fill",
-                    iconGradient: [.xomifyGreen, Color(red: 23/255, green: 183/255, blue: 91/255)],
-                    isEnrolled: viewModel.isWrappedEnrolled,
-                    isUpdating: viewModel.isUpdatingEnrollment
-                ) {
-                    Task { await viewModel.toggleWrappedEnrollment() }
+                NavigationLink(destination: WrappedView()) {
+                    enrollmentCard(
+                        title: "Monthly Wrapped",
+                        description: "Get monthly insights about your listening habits and track your music taste over time.",
+                        icon: "chart.bar.fill",
+                        iconGradient: [.xomifyGreen, Color(red: 23/255, green: 183/255, blue: 91/255)],
+                        isEnrolled: viewModel.isWrappedEnrolled,
+                        isUpdating: viewModel.isUpdatingEnrollment
+                    ) {
+                        Task { await viewModel.toggleWrappedEnrollment() }
+                    }
                 }
                 
-                enrollmentCard(
-                    title: "Release Radar",
-                    description: "Stay updated with new releases from your favorite artists. Never miss a drop.",
-                    icon: "antenna.radiowaves.left.and.right",
-                    iconGradient: [.xomifyPurple, Color(red: 122/255, green: 8/255, blue: 150/255)],
-                    isEnrolled: viewModel.isReleaseRadarEnrolled,
-                    isUpdating: viewModel.isUpdatingEnrollment
-                ) {
-                    Task { await viewModel.toggleReleaseRadarEnrollment() }
+                NavigationLink(destination: ReleaseRadarView()) {
+                    enrollmentCard(
+                        title: "Release Radar",
+                        description: "Stay updated with new releases from your favorite artists. Never miss a drop.",
+                        icon: "antenna.radiowaves.left.and.right",
+                        iconGradient: [.xomifyPurple, Color(red: 122/255, green: 8/255, blue: 150/255)],
+                        isEnrolled: viewModel.isReleaseRadarEnrolled,
+                        isUpdating: viewModel.isUpdatingEnrollment
+                    ) {
+                        Task { await viewModel.toggleReleaseRadarEnrollment() }
+                    }
                 }
             }
         }
@@ -180,8 +217,14 @@ struct ProfileView: View {
             
             Spacer()
             
-            Toggle("", isOn: Binding(get: { isEnrolled }, set: { _ in onToggle() }))
-                .labelsHidden().tint(.xomifyGreen).disabled(isUpdating)
+            VStack(spacing: 8) {
+                Toggle("", isOn: Binding(get: { isEnrolled }, set: { _ in onToggle() }))
+                    .labelsHidden().tint(.xomifyGreen).disabled(isUpdating)
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
         }
         .padding()
         .background(
