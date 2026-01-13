@@ -9,18 +9,24 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 24) {
-                    profileHeader
-                    statsSection
-                    quickStatsSection
-                    enrollmentSection
-                    accountSection
-                    logoutButton
+                VStack(spacing: 0) {
+                    // Banner header
+                    bannerHeader
+                    
+                    // Main content - reduced top padding
+                    VStack(spacing: 20) {
+                        profileHeader
+                        statsSection
+                        quickStatsSection
+                        enrollmentSection
+                        accountSection
+                        logoutButton
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom)
                 }
-                .padding()
             }
             .background(Color.xomifyDark.ignoresSafeArea())
-            .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .principal) {
@@ -40,13 +46,47 @@ struct ProfileView: View {
         }
     }
     
-    // Using your "logo" asset from Assets.xcassets
+    // MARK: - Banner Header
+    
+    private var bannerHeader: some View {
+        ZStack(alignment: .bottom) {
+            // Gradient background as fallback
+            LinearGradient(
+                colors: [Color.xomifyPurple.opacity(0.6), Color.xomifyDark],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .frame(height: 140)
+            .overlay(
+                // Try to load banner image
+                Image("banner")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(height: 140)
+                    .clipped()
+            )
+            
+            // Gradient overlay for smooth transition
+            LinearGradient(
+                colors: [.clear, Color.xomifyDark],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 80)
+        }
+        .frame(height: 140)
+    }
+    
+    // MARK: - Logo
+    
     private var xomifyLogo: some View {
         Image("logo")
             .resizable()
             .aspectRatio(contentMode: .fit)
             .frame(height: 28)
     }
+    
+    // MARK: - Profile Header
     
     private var profileHeader: some View {
         VStack(spacing: 16) {
@@ -55,27 +95,35 @@ struct ProfileView: View {
             } placeholder: {
                 Image(systemName: "person.circle.fill").resizable().foregroundColor(.gray)
             }
-            .frame(width: 120, height: 120)
+            .frame(width: 100, height: 100)
             .clipShape(Circle())
             .overlay(Circle().stroke(LinearGradient(colors: [.xomifyPurple, .xomifyGreen], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 3))
+            .shadow(color: .black.opacity(0.5), radius: 10, x: 0, y: 5)
+            .offset(y: -50)
+            .padding(.bottom, -50)
             
             if viewModel.isLoading {
                 ProgressView()
             } else {
-                Text(viewModel.displayName).font(.title).fontWeight(.bold).foregroundColor(.white)
+                Text(viewModel.displayName)
+                    .font(.title)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
                 if !viewModel.email.isEmpty {
-                    Text(viewModel.email).font(.subheadline).foregroundColor(.gray)
+                    Text(viewModel.email)
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
                 }
             }
         }
-        .padding(.top, 20)
     }
+    
+    // MARK: - Stats Section
     
     private var statsSection: some View {
         HStack(spacing: 16) {
             statCard(title: "Followers", value: "\(viewModel.followersCount)", icon: "person.2.fill", color: .xomifyPurple)
             
-            // Following - navigates to FollowingView
             NavigationLink(destination: FollowingView()) {
                 statCardContent(title: "Following", value: "\(viewModel.followingCount)", icon: "heart.fill", color: .xomifyGreen)
             }
@@ -100,7 +148,6 @@ struct ProfileView: View {
             Text(value).font(.title2).fontWeight(.bold).foregroundColor(.white)
             Text(title).font(.caption).foregroundColor(.gray)
             
-            // Subtle indicator that it's tappable
             HStack(spacing: 4) {
                 Text("View")
                     .font(.caption2)
@@ -114,6 +161,8 @@ struct ProfileView: View {
         .background(Color.xomifyCard)
         .cornerRadius(16)
     }
+    
+    // MARK: - Quick Stats Section
     
     private var quickStatsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -153,6 +202,8 @@ struct ProfileView: View {
         .background(Color.xomifyCard)
         .cornerRadius(12)
     }
+    
+    // MARK: - Enrollment Section
     
     private var enrollmentSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -233,6 +284,8 @@ struct ProfileView: View {
         )
     }
     
+    // MARK: - Account Section
+    
     private var accountSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Account Details").font(.headline).foregroundColor(.white)
@@ -254,7 +307,7 @@ struct ProfileView: View {
                         Text("Open Spotify Profile")
                     }
                     .frame(maxWidth: .infinity).padding()
-                    .background(Color(red: 29/255, green: 185/255, blue: 84/255))
+                    .background(Color.spotifyGreen)
                     .foregroundColor(.white).cornerRadius(12)
                 }
                 .padding(.top, 8)
@@ -271,6 +324,8 @@ struct ProfileView: View {
         }
         .padding()
     }
+    
+    // MARK: - Logout Button
     
     private var logoutButton: some View {
         Button { showLogoutConfirmation = true } label: {

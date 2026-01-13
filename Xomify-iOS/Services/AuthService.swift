@@ -105,7 +105,7 @@ final class AuthService: NSObject, Sendable {
         print("✅ Auth: Tokens saved to Keychain, expires in \(expiresIn)s")
     }
     
-    private var isTokenExpired: Bool {
+    var isTokenExpired: Bool {
         guard let expiration = tokenExpirationDate else { return true }
         return Date() >= expiration.addingTimeInterval(-60) // 1 min buffer
     }

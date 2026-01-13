@@ -1,77 +1,36 @@
 import SwiftUI
 
-/// Main tab bar view after authentication
-struct MainTabView: View {
-    
-    @State private var selectedTab = 0
-    
-    var body: some View {
-        TabView(selection: $selectedTab) {
-            // Home/Profile
-            ProfileView()
-                .tabItem {
-                    Label("Home", systemImage: "house.fill")
-                }
-                .tag(0)
-            
-            // Top Items
-            TopItemsView()
-                .tabItem {
-                    Label("Top", systemImage: "chart.bar.fill")
-                }
-                .tag(1)
-            
-            // Release Radar
-            ReleaseRadarView()
-                .tabItem {
-                    Label("Releases", systemImage: "antenna.radiowaves.left.and.right")
-                }
-                .tag(2)
-            
-            // Wrapped
-            WrappedView()
-                .tabItem {
-                    Label("Wrapped", systemImage: "gift.fill")
-                }
-                .tag(3)
-            
-            // Playlist Builder
-            PlaylistBuilderTabView()
-                .tabItem {
-                    Label("Builder", systemImage: "music.note.list")
-                }
-                .tag(4)
-        }
-        .tint(Color.xomifyGreen)
-    }
-}
-
-// MARK: - Playlist Builder Tab
-
-struct PlaylistBuilderTabView: View {
+struct PlaylistBuilderView: View {
     @State private var viewModel = PlaylistBuilderViewModel()
+    @Environment(\.dismiss) private var dismiss
+    
     @State private var showingCreateSheet = false
-    @State private var selectedTab = 0 // 0 = Playlist, 1 = Search
     
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Tab picker
-                tabPicker
-                
-                // Content based on selected tab
-                if selectedTab == 0 {
-                    playlistTab
+                if viewModel.isEmpty && viewModel.successMessage == nil {
+                    emptyState
+                } else if let success = viewModel.successMessage {
+                    successState(success)
                 } else {
-                    searchTab
+                    trackList
+                    bottomBar
                 }
             }
             .background(Color.xomifyDark.ignoresSafeArea())
             .navigationTitle("Playlist Builder")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") {
+                        dismiss()
+                    }
+                    .foregroundColor(.xomifyPurple)
+                }
+                
                 ToolbarItem(placement: .topBarTrailing) {
-                    if selectedTab == 0 && !viewModel.isEmpty {
+                    if !viewModel.isEmpty {
                         Button {
                             viewModel.clear()
                         } label: {
@@ -87,210 +46,6 @@ struct PlaylistBuilderTabView: View {
         }
     }
     
-    // MARK: - Tab Picker
-    
-    private var tabPicker: some View {
-        HStack(spacing: 0) {
-            // Playlist Tab
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedTab = 0
-                }
-            } label: {
-                VStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "music.note.list")
-                        Text("Playlist")
-                        if viewModel.trackCount > 0 {
-                            Text("(\(viewModel.trackCount))")
-                                .font(.caption)
-                        }
-                    }
-                    .font(.subheadline)
-                    .fontWeight(selectedTab == 0 ? .semibold : .regular)
-                    .foregroundColor(selectedTab == 0 ? .white : .gray)
-                    
-                    Rectangle()
-                        .fill(selectedTab == 0 ? Color.xomifyPurple : Color.clear)
-                        .frame(height: 3)
-                }
-            }
-            .frame(maxWidth: .infinity)
-            
-            // Search Tab
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    selectedTab = 1
-                }
-            } label: {
-                VStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                        Text("Search")
-                    }
-                    .font(.subheadline)
-                    .fontWeight(selectedTab == 1 ? .semibold : .regular)
-                    .foregroundColor(selectedTab == 1 ? .white : .gray)
-                    
-                    Rectangle()
-                        .fill(selectedTab == 1 ? Color.xomifyGreen : Color.clear)
-                        .frame(height: 3)
-                }
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .padding(.top, 8)
-        .background(Color.xomifyCard)
-    }
-    
-    // MARK: - Playlist Tab
-    
-    private var playlistTab: some View {
-        VStack(spacing: 0) {
-            if viewModel.isEmpty && viewModel.successMessage == nil {
-                emptyState
-            } else if let success = viewModel.successMessage {
-                successState(success)
-            } else {
-                trackList
-                bottomBar
-            }
-        }
-    }
-    
-    // MARK: - Search Tab
-    
-    private var searchTab: some View {
-        VStack(spacing: 0) {
-            // Search bar
-            searchBar
-            
-            if viewModel.isSearching {
-                Spacer()
-                ProgressView()
-                    .tint(Color.xomifyGreen)
-                Spacer()
-            } else if viewModel.searchResults.isEmpty {
-                searchEmptyState
-            } else {
-                searchResultsList
-            }
-        }
-    }
-    
-    // MARK: - Search Bar
-    
-    private var searchBar: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.gray)
-            
-            TextField("Search for songs...", text: $viewModel.searchQuery)
-                .foregroundColor(.white)
-                .autocorrectionDisabled()
-                .onSubmit {
-                    Task { await viewModel.search() }
-                }
-            
-            if !viewModel.searchQuery.isEmpty {
-                Button {
-                    viewModel.clearSearch()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.gray)
-                }
-            }
-        }
-        .padding()
-        .background(Color.white.opacity(0.05))
-        .cornerRadius(12)
-        .padding()
-    }
-    
-    private var searchEmptyState: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 50))
-                .foregroundColor(.gray.opacity(0.5))
-            
-            Text("Search for Songs")
-                .font(.headline)
-                .foregroundColor(.white)
-            
-            Text("Find songs to add to your playlist")
-                .font(.subheadline)
-                .foregroundColor(.gray)
-            
-            Spacer()
-        }
-    }
-    
-    // MARK: - Search Results
-    
-    private var searchResultsList: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(viewModel.searchResults) { track in
-                    searchResultRow(track)
-                }
-            }
-            .padding()
-        }
-    }
-    
-    private func searchResultRow(_ track: SpotifyTrack) -> some View {
-        HStack(spacing: 12) {
-            // Album art
-            AsyncImage(url: track.imageUrl) { image in
-                image.resizable()
-            } placeholder: {
-                Rectangle().fill(Color.gray.opacity(0.3))
-            }
-            .frame(width: 50, height: 50)
-            .cornerRadius(6)
-            
-            // Track info
-            VStack(alignment: .leading, spacing: 4) {
-                Text(track.name)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                
-                Text(track.artistNames)
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
-            }
-            
-            Spacer()
-            
-            // Duration
-            Text(track.duration)
-                .font(.caption)
-                .foregroundColor(.gray)
-            
-            // Add button
-            Button {
-                if viewModel.contains(track) {
-                    viewModel.removeTrack(track)
-                } else {
-                    viewModel.addTrack(track)
-                    // Switch to playlist tab to show added track
-                }
-            } label: {
-                Image(systemName: viewModel.contains(track) ? "checkmark.circle.fill" : "plus.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(viewModel.contains(track) ? Color.xomifyGreen : Color.xomifyPurple)
-            }
-        }
-        .padding(12)
-        .background(Color.xomifyCard)
-        .cornerRadius(10)
-    }
-    
     // MARK: - Empty State
     
     private var emptyState: some View {
@@ -299,7 +54,7 @@ struct PlaylistBuilderTabView: View {
             
             Image(systemName: "music.note.list")
                 .font(.system(size: 60))
-                .foregroundColor(Color.xomifyPurple.opacity(0.5))
+                .foregroundColor(.xomifyPurple.opacity(0.5))
             
             Text("No Tracks Added")
                 .font(.title2)
@@ -311,35 +66,9 @@ struct PlaylistBuilderTabView: View {
                 .foregroundColor(.gray)
                 .multilineTextAlignment(.center)
             
-            // Quick tips
-            VStack(alignment: .leading, spacing: 12) {
-                tipRow(icon: "music.note", text: "Tap + on any track to add it")
-                tipRow(icon: "person.2.fill", text: "Add artist's top tracks")
-                tipRow(icon: "square.stack.fill", text: "Add entire albums")
-                tipRow(icon: "chart.bar.fill", text: "Save your top songs")
-            }
-            .padding()
-            .background(Color.white.opacity(0.05))
-            .cornerRadius(16)
-            .padding(.horizontal, 40)
-            .padding(.top, 20)
-            
             Spacer()
         }
         .padding()
-    }
-    
-    private func tipRow(icon: String, text: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundColor(Color.xomifyPurple)
-                .frame(width: 24)
-            
-            Text(text)
-                .font(.subheadline)
-                .foregroundColor(.gray)
-        }
     }
     
     // MARK: - Success State
@@ -350,7 +79,7 @@ struct PlaylistBuilderTabView: View {
             
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 80))
-                .foregroundColor(Color.xomifyGreen)
+                .foregroundColor(.xomifyGreen)
             
             Text("Playlist Created!")
                 .font(.title)
@@ -371,7 +100,7 @@ struct PlaylistBuilderTabView: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.spotifyGreen)
+                    .background(Color(red: 29/255, green: 185/255, blue: 84/255))
                     .foregroundColor(.white)
                     .cornerRadius(30)
                 }
@@ -383,7 +112,7 @@ struct PlaylistBuilderTabView: View {
             } label: {
                 Text("Build Another Playlist")
                     .font(.subheadline)
-                    .foregroundColor(Color.xomifyPurple)
+                    .foregroundColor(.xomifyPurple)
             }
             .padding(.top, 8)
             
@@ -396,6 +125,7 @@ struct PlaylistBuilderTabView: View {
     
     private var trackList: some View {
         List {
+            // Stats header
             Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
@@ -409,20 +139,19 @@ struct PlaylistBuilderTabView: View {
                     
                     Spacer()
                     
+                    // Shuffle order button
                     Button {
                         viewModel.shuffleTracks()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "shuffle")
-                            Text("Shuffle")
-                        }
-                        .font(.subheadline)
-                        .foregroundColor(Color.xomifyPurple)
+                        Image(systemName: "shuffle")
+                            .font(.title3)
+                            .foregroundColor(.xomifyPurple)
                     }
                 }
                 .listRowBackground(Color.xomifyCard)
             }
             
+            // Tracks
             Section {
                 ForEach(Array(viewModel.tracks.enumerated()), id: \.element.id) { index, track in
                     trackRow(track, index: index)
@@ -445,11 +174,13 @@ struct PlaylistBuilderTabView: View {
     
     private func trackRow(_ track: SpotifyTrack, index: Int) -> some View {
         HStack(spacing: 12) {
+            // Track number
             Text("\(index + 1)")
                 .font(.caption)
                 .foregroundColor(.gray)
                 .frame(width: 24)
             
+            // Album art
             AsyncImage(url: track.imageUrl) { image in
                 image.resizable()
             } placeholder: {
@@ -458,6 +189,7 @@ struct PlaylistBuilderTabView: View {
             .frame(width: 44, height: 44)
             .cornerRadius(4)
             
+            // Track info
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.name)
                     .font(.subheadline)
@@ -473,6 +205,7 @@ struct PlaylistBuilderTabView: View {
             
             Spacer()
             
+            // Duration
             Text(track.duration)
                 .font(.caption)
                 .foregroundColor(.gray)
@@ -487,6 +220,7 @@ struct PlaylistBuilderTabView: View {
                 .background(Color.gray.opacity(0.3))
             
             HStack(spacing: 16) {
+                // Track count
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(viewModel.trackCount) tracks")
                         .font(.subheadline)
@@ -499,6 +233,7 @@ struct PlaylistBuilderTabView: View {
                 
                 Spacer()
                 
+                // Create button
                 Button {
                     viewModel.resetForm()
                     showingCreateSheet = true
@@ -511,7 +246,7 @@ struct PlaylistBuilderTabView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
                     .background(
-                        LinearGradient(colors: [Color.xomifyPurple, Color.xomifyGreen], startPoint: .leading, endPoint: .trailing)
+                        LinearGradient(colors: [.xomifyPurple, .xomifyGreen], startPoint: .leading, endPoint: .trailing)
                     )
                     .foregroundColor(.white)
                     .cornerRadius(25)
@@ -527,7 +262,9 @@ struct PlaylistBuilderTabView: View {
     private var createPlaylistSheet: some View {
         NavigationStack {
             VStack(spacing: 24) {
+                // Preview
                 VStack(spacing: 12) {
+                    // Playlist art grid
                     playlistArtGrid
                     
                     Text("\(viewModel.trackCount) tracks • \(viewModel.totalDuration)")
@@ -536,7 +273,9 @@ struct PlaylistBuilderTabView: View {
                 }
                 .padding(.top, 20)
                 
+                // Form
                 VStack(spacing: 16) {
+                    // Name
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Playlist Name")
                             .font(.caption)
@@ -551,6 +290,7 @@ struct PlaylistBuilderTabView: View {
                             .foregroundColor(.white)
                     }
                     
+                    // Description
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Description (optional)")
                             .font(.caption)
@@ -565,6 +305,7 @@ struct PlaylistBuilderTabView: View {
                             .foregroundColor(.white)
                     }
                     
+                    // Public toggle
                     Toggle(isOn: $viewModel.isPublic) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Public Playlist")
@@ -575,7 +316,7 @@ struct PlaylistBuilderTabView: View {
                                 .foregroundColor(.gray)
                         }
                     }
-                    .tint(Color.xomifyGreen)
+                    .tint(.xomifyGreen)
                     .padding()
                     .background(Color.white.opacity(0.05))
                     .cornerRadius(12)
@@ -584,6 +325,7 @@ struct PlaylistBuilderTabView: View {
                 
                 Spacer()
                 
+                // Error message
                 if let error = viewModel.errorMessage {
                     Text(error)
                         .font(.caption)
@@ -591,6 +333,7 @@ struct PlaylistBuilderTabView: View {
                         .padding(.horizontal)
                 }
                 
+                // Create button
                 Button {
                     Task {
                         await viewModel.createPlaylist()
@@ -612,7 +355,7 @@ struct PlaylistBuilderTabView: View {
                     .frame(maxWidth: .infinity)
                     .padding()
                     .background(
-                        LinearGradient(colors: [Color.xomifyPurple, Color.xomifyGreen], startPoint: .leading, endPoint: .trailing)
+                        LinearGradient(colors: [.xomifyPurple, .xomifyGreen], startPoint: .leading, endPoint: .trailing)
                     )
                     .foregroundColor(.white)
                     .cornerRadius(30)
@@ -643,6 +386,7 @@ struct PlaylistBuilderTabView: View {
         
         return ZStack {
             if images.count >= 4 {
+                // 2x2 grid of album arts
                 VStack(spacing: 2) {
                     HStack(spacing: 2) {
                         albumArtImage(url: images[0])
@@ -656,6 +400,7 @@ struct PlaylistBuilderTabView: View {
                 .frame(width: 160, height: 160)
                 .cornerRadius(12)
             } else if let firstImage = images.first {
+                // Single image
                 AsyncImage(url: firstImage) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
@@ -664,13 +409,14 @@ struct PlaylistBuilderTabView: View {
                 .frame(width: 160, height: 160)
                 .cornerRadius(12)
             } else {
+                // Placeholder
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.xomifyPurple.opacity(0.3))
                     .frame(width: 160, height: 160)
                     .overlay(
                         Image(systemName: "music.note.list")
                             .font(.system(size: 40))
-                            .foregroundColor(Color.xomifyPurple)
+                            .foregroundColor(.xomifyPurple)
                     )
             }
         }
@@ -687,6 +433,64 @@ struct PlaylistBuilderTabView: View {
     }
 }
 
+// MARK: - Floating Button Overlay
+
+struct PlaylistBuilderFloatingButton: View {
+    private let manager = PlaylistBuilderManager.shared
+    
+    var body: some View {
+        if manager.trackCount > 0 {
+            Button {
+                manager.show()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "music.note.list")
+                        .font(.subheadline)
+                    
+                    Text("\(manager.trackCount)")
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    Capsule()
+                        .fill(LinearGradient(colors: [.xomifyPurple, .xomifyGreen], startPoint: .leading, endPoint: .trailing))
+                        .shadow(color: .xomifyPurple.opacity(0.5), radius: 10, x: 0, y: 5)
+                )
+                .foregroundColor(.white)
+            }
+            .transition(.scale.combined(with: .opacity))
+            .animation(.spring(response: 0.3), value: manager.trackCount)
+        }
+    }
+}
+
+// MARK: - Add to Playlist Button
+
+struct AddToPlaylistButton: View {
+    let track: SpotifyTrack
+    private let manager = PlaylistBuilderManager.shared
+    
+    var isAdded: Bool {
+        manager.contains(track)
+    }
+    
+    var body: some View {
+        Button {
+            if isAdded {
+                manager.removeTrack(track)
+            } else {
+                manager.addTrack(track)
+            }
+        } label: {
+            Image(systemName: isAdded ? "checkmark.circle.fill" : "plus.circle")
+                .font(.title3)
+                .foregroundColor(isAdded ? .xomifyGreen : .xomifyPurple)
+        }
+    }
+}
+
 #Preview {
-    MainTabView()
+    PlaylistBuilderView()
 }

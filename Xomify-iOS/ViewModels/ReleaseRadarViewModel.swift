@@ -40,12 +40,9 @@ final class ReleaseRadarViewModel {
     /// Stats for currently displayed week
     var displayStats: ReleaseStats? {
         if let week = selectedWeek {
-            return ReleaseStats(from: week.stats)
+            return week.stats
         }
-        if let firstWeek = historyWeeks.first {
-            return ReleaseStats(from: firstWeek.stats)
-        }
-        return nil
+        return historyWeeks.first?.stats
     }
     
     /// Display name for selected week

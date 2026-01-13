@@ -40,8 +40,8 @@ struct ReleaseRadarWeek: Codable, Identifiable, Sendable {
     let weekDisplay: String?
     let startDate: String?
     let endDate: String?
-    let releases: [ReleaseRadarRelease]?
-    let stats: ReleaseRadarStats?
+    let releases: [Release]?
+    let stats: ReleaseStats?
     let playlistId: String?
     let createdAt: String?
     
@@ -75,9 +75,11 @@ struct ReleaseRadarWeek: Codable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Release Stats
+
 /// Stats stored with each week in DynamoDB
 /// Note: DynamoDB returns numbers as strings, so we decode as String and convert
-struct ReleaseRadarStats: Codable, Sendable {
+struct ReleaseStats: Codable, Sendable {
     let artistCount: Int?
     let releaseCount: Int?
     let trackCount: Int?
@@ -93,6 +95,15 @@ struct ReleaseRadarStats: Codable, Sendable {
         trackCount = Self.decodeIntOrString(from: container, key: .trackCount)
         albumCount = Self.decodeIntOrString(from: container, key: .albumCount)
         singleCount = Self.decodeIntOrString(from: container, key: .singleCount)
+    }
+    
+    // Regular initializer for creating stats manually
+    init(artistCount: Int? = nil, releaseCount: Int? = nil, trackCount: Int? = nil, albumCount: Int? = nil, singleCount: Int? = nil) {
+        self.artistCount = artistCount
+        self.releaseCount = releaseCount
+        self.trackCount = trackCount
+        self.albumCount = albumCount
+        self.singleCount = singleCount
     }
     
     private static func decodeIntOrString(from container: KeyedDecodingContainer<CodingKeys>, key: CodingKeys) -> Int? {
@@ -112,10 +123,12 @@ struct ReleaseRadarStats: Codable, Sendable {
     }
 }
 
+// MARK: - Release
+
 /// A single release (album/single/EP)
 /// Note: All fields are optional to handle varying API responses
 /// DynamoDB returns numbers as strings, so totalTracks needs special handling
-struct ReleaseRadarRelease: Codable, Identifiable, Sendable {
+struct Release: Codable, Sendable {
     // Primary identifier - try albumId first, fall back to id
     let albumId: String?
     let albumName: String?
@@ -164,14 +177,6 @@ struct ReleaseRadarRelease: Codable, Identifiable, Sendable {
         case id, name
     }
     
-    // Identifiable conformance - use albumId or fall back to id
-    var identifier: String {
-        albumId ?? id ?? UUID().uuidString
-    }
-    
-    // For ForEach - use computed identifier
-    // Note: Can't use 'id' directly as it conflicts with the optional 'id' property
-    
     var image: URL? {
         guard let urlString = imageUrl else { return nil }
         return URL(string: urlString)
@@ -191,51 +196,10 @@ struct ReleaseRadarRelease: Codable, Identifiable, Sendable {
     var displayArtist: String {
         artistName ?? "Unknown Artist"
     }
-}
-
-// Extend to provide proper Identifiable id
-extension ReleaseRadarRelease {
-    // This creates a stable id for ForEach
+    
+    /// Stable ID for ForEach - use albumId or fall back to id
     var stableId: String {
         albumId ?? id ?? UUID().uuidString
-    }
-}
-
-// MARK: - Release (alias for ViewModel compatibility)
-
-typealias Release = ReleaseRadarRelease
-
-// MARK: - ReleaseStats (computed stats for ViewModel)
-
-struct ReleaseStats: Sendable {
-    let artistCount: Int
-    let releaseCount: Int
-    let trackCount: Int
-    let albumCount: Int
-    let singleCount: Int
-    
-    init(artistCount: Int = 0, releaseCount: Int = 0, trackCount: Int = 0, albumCount: Int = 0, singleCount: Int = 0) {
-        self.artistCount = artistCount
-        self.releaseCount = releaseCount
-        self.trackCount = trackCount
-        self.albumCount = albumCount
-        self.singleCount = singleCount
-    }
-    
-    init(from releases: [ReleaseRadarRelease]) {
-        self.artistCount = Set(releases.compactMap { $0.artistId }).count
-        self.releaseCount = releases.count
-        self.trackCount = releases.reduce(0) { $0 + ($1.totalTracks ?? 0) }
-        self.albumCount = releases.filter { $0.albumType?.lowercased() == "album" }.count
-        self.singleCount = releases.filter { $0.albumType?.lowercased() == "single" }.count
-    }
-    
-    init(from stats: ReleaseRadarStats?) {
-        self.artistCount = stats?.artistCount ?? 0
-        self.releaseCount = stats?.releaseCount ?? 0
-        self.trackCount = stats?.trackCount ?? 0
-        self.albumCount = stats?.albumCount ?? 0
-        self.singleCount = stats?.singleCount ?? 0
     }
 }
 
@@ -274,8 +238,6 @@ struct MonthlyWrap: Codable, Identifiable, Sendable {
         return monthKey
     }
     
-    // TermData uses snake_case keys in JSON (short_term, medium_term, long_term)
-    // convertFromSnakeCase in decoder handles this automatically
     struct TermData: Codable, Sendable {
         let shortTerm: [String]?
         let mediumTerm: [String]?
@@ -297,5 +259,7 @@ struct WrappedDataResponse: Codable, Sendable {
     let activeReleaseRadar: Bool
     let wraps: [MonthlyWrap]?
 }
+
+// MARK: - Empty Response
 
 struct EmptyResponse: Codable, Sendable {}
