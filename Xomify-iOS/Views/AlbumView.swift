@@ -8,25 +8,40 @@ struct AlbumView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     
+    @Bindable private var playlistBuilder = PlaylistBuilderManager.shared
     private let spotifyService = SpotifyService.shared
     
     var body: some View {
-        ScrollView {
-            if isLoading {
-                ProgressView()
-                    .padding(.top, 100)
-            } else if let error = errorMessage {
-                errorState(error)
-            } else if let album = album {
-                VStack(spacing: 0) {
-                    // Album Header
-                    albumHeader(album)
-                    
-                    // Action Buttons
-                    actionButtons(album)
-                    
-                    // Track List
-                    trackList
+        ZStack {
+            ScrollView {
+                if isLoading {
+                    ProgressView()
+                        .padding(.top, 100)
+                } else if let error = errorMessage {
+                    errorState(error)
+                } else if let album = album {
+                    VStack(spacing: 0) {
+                        // Album Header
+                        albumHeader(album)
+                        
+                        // Action Buttons
+                        actionButtons(album)
+                        
+                        // Track List
+                        trackList
+                    }
+                    .padding(.bottom, 100) // Space for floating button
+                }
+            }
+            
+            // Floating playlist builder button
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    PlaylistBuilderFloatingButton()
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20)
                 }
             }
         }
@@ -35,6 +50,9 @@ struct AlbumView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadAlbum()
+        }
+        .sheet(isPresented: $playlistBuilder.isShowing) {
+            PlaylistBuilderView()
         }
     }
     
@@ -101,36 +119,58 @@ struct AlbumView: View {
     // MARK: - Action Buttons
     
     private func actionButtons(_ album: SpotifyAlbum) -> some View {
-        HStack(spacing: 16) {
-            // Play on Spotify
-            if let url = spotifyUrl(for: album) {
-                Link(destination: url) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "play.fill")
-                        Text("Play")
+        VStack(spacing: 12) {
+            // Main action row
+            HStack(spacing: 16) {
+                // Play on Spotify
+                if let url = spotifyUrl(for: album) {
+                    Link(destination: url) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "play.fill")
+                            Text("Play")
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color(red: 29/255, green: 185/255, blue: 84/255))
+                        .foregroundColor(.white)
+                        .cornerRadius(30)
                     }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color(red: 29/255, green: 185/255, blue: 84/255))
-                    .foregroundColor(.white)
-                    .cornerRadius(30)
+                }
+                
+                // Shuffle on Spotify
+                if let url = spotifyShuffleUrl(for: album) {
+                    Link(destination: url) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "shuffle")
+                            Text("Shuffle")
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.white.opacity(0.1))
+                        .foregroundColor(.white)
+                        .cornerRadius(30)
+                    }
                 }
             }
             
-            // Shuffle on Spotify
-            if let url = spotifyShuffleUrl(for: album) {
-                Link(destination: url) {
+            // Add all to playlist builder
+            if !tracks.isEmpty {
+                Button {
+                    playlistBuilder.addTracks(tracks)
+                } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "shuffle")
-                        Text("Shuffle")
+                        Image(systemName: "plus.circle")
+                        Text("Add All to Playlist Builder")
                     }
-                    .font(.headline)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.white.opacity(0.1))
-                    .foregroundColor(.white)
-                    .cornerRadius(30)
+                    .padding(.vertical, 12)
+                    .background(Color.xomifyPurple.opacity(0.2))
+                    .foregroundColor(.xomifyPurple)
+                    .cornerRadius(25)
                 }
             }
         }
@@ -203,6 +243,9 @@ struct AlbumView: View {
             Text(track.duration)
                 .font(.caption)
                 .foregroundColor(.gray)
+            
+            // Add to playlist builder
+            AddToPlaylistButton(track: track)
             
             // Play button
             Button {

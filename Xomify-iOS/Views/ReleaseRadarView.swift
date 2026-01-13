@@ -5,40 +5,55 @@ struct ReleaseRadarView: View {
     @State private var showWeekPicker = false
     @State private var isLoadingUser = true
     
+    @Bindable private var playlistBuilder = PlaylistBuilderManager.shared
     private let spotifyService = SpotifyService.shared
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Week selector header
-                weekHeader
-                
-                // Stats bar
-                if let stats = viewModel.displayStats {
-                    statsBar(stats)
+            ZStack {
+                VStack(spacing: 0) {
+                    // Week selector header
+                    weekHeader
+                    
+                    // Stats bar
+                    if let stats = viewModel.displayStats {
+                        statsBar(stats)
+                    }
+                    
+                    // Content
+                    ScrollView {
+                        if isLoadingUser || viewModel.isLoading {
+                            VStack(spacing: 12) {
+                                ProgressView()
+                                Text(isLoadingUser ? "Loading profile..." : "Loading releases...")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                            }
+                            .padding(.top, 60)
+                        } else if let error = viewModel.errorMessage {
+                            errorState(error)
+                        } else if viewModel.displayReleases.isEmpty {
+                            emptyState
+                        } else {
+                            LazyVStack(spacing: 12) {
+                                ForEach(viewModel.displayReleases, id: \.stableId) { release in
+                                    releaseCard(release)
+                                }
+                            }
+                            .padding()
+                            .padding(.bottom, 80) // Space for floating button
+                        }
+                    }
                 }
                 
-                // Content
-                ScrollView {
-                    if isLoadingUser || viewModel.isLoading {
-                        VStack(spacing: 12) {
-                            ProgressView()
-                            Text(isLoadingUser ? "Loading profile..." : "Loading releases...")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                        .padding(.top, 60)
-                    } else if let error = viewModel.errorMessage {
-                        errorState(error)
-                    } else if viewModel.displayReleases.isEmpty {
-                        emptyState
-                    } else {
-                        LazyVStack(spacing: 12) {
-                            ForEach(viewModel.displayReleases, id: \.stableId) { release in
-                                releaseCard(release)
-                            }
-                        }
-                        .padding()
+                // Floating playlist builder button
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        PlaylistBuilderFloatingButton()
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 20)
                     }
                 }
             }
@@ -64,6 +79,9 @@ struct ReleaseRadarView: View {
             }
             .sheet(isPresented: $showWeekPicker) {
                 weekPicker
+            }
+            .sheet(isPresented: $playlistBuilder.isShowing) {
+                PlaylistBuilderView()
             }
         }
     }
@@ -99,68 +117,92 @@ struct ReleaseRadarView: View {
     // MARK: - Week Header
     
     private var weekHeader: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Week")
-                    .font(.caption)
-                    .foregroundColor(.gray)
-                
-                Text(viewModel.displayWeekName)
-                    .font(.headline)
-                    .foregroundColor(.white)
-                
-                if let dateRange = viewModel.displayDateRange {
-                    Text(dateRange)
+        Button {
+            showWeekPicker = true
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RELEASE RADAR")
                         .font(.caption2)
-                        .foregroundColor(.gray)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.xomifyGreen)
+                    
+                    Text(viewModel.displayWeekName)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                    
+                    if let dateRange = viewModel.displayDateRange {
+                        Text(dateRange)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                Spacer()
+                
+                if viewModel.historyWeeks.count > 1 {
+                    Image(systemName: "chevron.down.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.xomifyGreen.opacity(0.7))
                 }
             }
-            
-            Spacer()
-            
-            // Week picker button
-            Button {
-                showWeekPicker = true
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Change Week")
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                }
-                .font(.caption)
-                .fontWeight(.medium)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.1))
-                .foregroundColor(.white)
-                .cornerRadius(8)
-            }
-            .disabled(viewModel.historyWeeks.count <= 1)
+            .padding()
+            .background(
+                LinearGradient(
+                    colors: [Color.xomifyGreen.opacity(0.15), Color.xomifyCard],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
         }
-        .padding()
-        .background(Color.xomifyCard)
+        .disabled(viewModel.historyWeeks.count <= 1)
     }
     
     // MARK: - Stats Bar
     
     private func statsBar(_ stats: ReleaseStats) -> some View {
         HStack(spacing: 0) {
-            statItem(value: "\(stats.releaseCount)", label: "Releases", color: .xomifyGreen)
-            Divider().frame(height: 30).background(Color.gray.opacity(0.3))
-            statItem(value: "\(stats.artistCount)", label: "Artists", color: .xomifyPurple)
-            Divider().frame(height: 30).background(Color.gray.opacity(0.3))
-            statItem(value: "\(stats.trackCount)", label: "Tracks", color: .blue)
-            Divider().frame(height: 30).background(Color.gray.opacity(0.3))
-            statItem(value: "\(stats.albumCount)/\(stats.singleCount)", label: "Albums/Singles", color: .orange)
+            statItem(value: stats.releaseCount ?? 0, label: "Releases", color: .xomifyGreen)
+            
+            Divider()
+                .frame(height: 30)
+                .background(Color.gray.opacity(0.3))
+            
+            statItem(value: stats.artistCount ?? 0, label: "Artists", color: .xomifyPurple)
+            
+            Divider()
+                .frame(height: 30)
+                .background(Color.gray.opacity(0.3))
+            
+            statItem(value: stats.trackCount ?? 0, label: "Tracks", color: .xomifyGreen)
+            
+            Divider()
+                .frame(height: 30)
+                .background(Color.gray.opacity(0.3))
+            
+            statItem(value: stats.albumCount ?? 0, label: "Albums", color: .xomifyPurple)
+            
+            Divider()
+                .frame(height: 30)
+                .background(Color.gray.opacity(0.3))
+            
+            statItem(value: stats.singleCount ?? 0, label: "Singles", color: .xomifyGreen)
         }
-        .padding(.vertical, 12)
-        .background(Color.white.opacity(0.03))
+        .padding(.vertical, 14)
+        .background(
+            LinearGradient(
+                colors: [Color.xomifyCard, Color.xomifyDark.opacity(0.8)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
     
-    private func statItem(value: String, label: String, color: Color) -> some View {
+    private func statItem(value: Int, label: String, color: Color) -> some View {
         VStack(spacing: 4) {
-            Text(value)
-                .font(.headline)
+            Text("\(value)")
+                .font(.title3)
                 .fontWeight(.bold)
                 .foregroundColor(color)
             Text(label)
@@ -261,18 +303,41 @@ struct ReleaseRadarView: View {
             
             Spacer()
             
-            // Play button - opens in Spotify
-            Button {
-                playRelease(release)
-            } label: {
-                Image(systemName: "play.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(.xomifyGreen)
+            VStack(spacing: 12) {
+                // Add to playlist button
+                Button {
+                    Task { await addReleaseToPlaylist(release) }
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.xomifyPurple)
+                }
+                
+                // Play button - opens in Spotify
+                Button {
+                    playRelease(release)
+                } label: {
+                    Image(systemName: "play.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.xomifyGreen)
+                }
             }
         }
         .padding(12)
         .background(Color.xomifyCard)
         .cornerRadius(12)
+    }
+    
+    private func addReleaseToPlaylist(_ release: Release) async {
+        guard let albumId = release.albumId ?? release.id else { return }
+        
+        do {
+            let tracks = try await spotifyService.getAlbumTracks(id: albumId)
+            playlistBuilder.addTracks(tracks)
+            print("✅ Added \(tracks.count) tracks from '\(release.displayName)' to playlist builder")
+        } catch {
+            print("❌ Failed to add release tracks: \(error)")
+        }
     }
     
     private func playRelease(_ release: Release) {

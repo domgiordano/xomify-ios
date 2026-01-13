@@ -1,230 +1,311 @@
 import Foundation
 
-/// Centralized network service for API requests
-/// Swift 6 compatible with proper actor isolation
+/// Handles all network requests to Spotify API and Xomify backend
 actor NetworkService {
     
     // MARK: - Singleton
     
     static let shared = NetworkService()
     
-    // Store URLs as instance properties to avoid actor isolation issues
-    private let spotifyBaseUrl = "https://api.spotify.com/v1"
-    private let xomifyBaseUrl: String
-    private let xomifyToken: String
+    private init() {}
     
-    private init() {
-        // Read config values during init - matching your Secrets.xcconfig keys
-        // XOMIFY_API_ID is the API Gateway ID used to build the URL
-        let apiId = Bundle.main.object(forInfoDictionaryKey: "XOMIFY_API_ID") as? String ?? "1hm6iwckle"
-        self.xomifyBaseUrl = "https://\(apiId).execute-api.us-east-1.amazonaws.com/dev"
-        self.xomifyToken = Bundle.main.object(forInfoDictionaryKey: "XOMIFY_API_TOKEN") as? String ?? ""
+    // MARK: - Base URLs
+    
+    private let spotifyApiBaseUrl = "https://api.spotify.com/v1"
+    
+    // MARK: - HTTP Methods
+    
+    enum HTTPMethod: String {
+        case get = "GET"
+        case post = "POST"
+        case put = "PUT"
+        case delete = "DELETE"
     }
     
-    // MARK: - Spotify API
+    // MARK: - Errors
     
-    func spotifyGet<T: Decodable>(_ endpoint: String) async throws -> T {
-        guard let accessToken = await AuthService.shared.accessToken else {
-            throw NetworkError.unauthorized
-        }
+    enum NetworkError: LocalizedError {
+        case unauthorized
+        case noData
+        case decodingError(Error)
+        case serverError(statusCode: Int, message: String)
+        case unknown(Error)
         
-        let urlString = spotifyBaseUrl + endpoint
-        guard let url = URL(string: urlString) else {
-            throw NetworkError.invalidURL
+        var errorDescription: String? {
+            switch self {
+            case .unauthorized:
+                return "Not authenticated. Please log in again."
+            case .noData:
+                return "No data received from server."
+            case .decodingError(let error):
+                return "Failed to decode response: \(error.localizedDescription)"
+            case .serverError(let code, let message):
+                return "Server error (\(code)): \(message)"
+            case .unknown(let error):
+                return error.localizedDescription
+            }
         }
+    }
+    
+    // MARK: - Spotify API Requests
+    
+    /// Make an authenticated request to Spotify API
+    func spotifyRequest<T: Decodable>(
+        endpoint: String,
+        method: HTTPMethod = .get,
+        body: [String: Any]? = nil
+    ) async throws -> T {
+        let token = try await getValidSpotifyToken()
         
+        let url = URL(string: "\(spotifyApiBaseUrl)\(endpoint)")!
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpMethod = method.rawValue
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let body = body {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
         
         return try await performRequest(request)
     }
     
+    /// GET request to Spotify
+    func spotifyGet<T: Decodable>(_ endpoint: String, queryParams: [String: String]? = nil) async throws -> T {
+        var fullEndpoint = endpoint
+        
+        if let params = queryParams, !params.isEmpty {
+            let queryString = params.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+            if endpoint.contains("?") {
+                fullEndpoint += "&\(queryString)"
+            } else {
+                fullEndpoint += "?\(queryString)"
+            }
+        }
+        
+        return try await spotifyRequest(endpoint: fullEndpoint, method: .get)
+    }
+    
+    /// POST request to Spotify
     func spotifyPost<T: Decodable>(_ endpoint: String, body: [String: Any]) async throws -> T {
-        guard let accessToken = await AuthService.shared.accessToken else {
-            throw NetworkError.unauthorized
-        }
+        try await spotifyRequest(endpoint: endpoint, method: .post, body: body)
+    }
+    
+    /// PUT request to Spotify (no response body)
+    func spotifyPut(_ endpoint: String, body: [String: Any]) async throws {
+        let token = try await getValidSpotifyToken()
         
-        let urlString = spotifyBaseUrl + endpoint
-        guard let url = URL(string: urlString) else {
-            throw NetworkError.invalidURL
-        }
-        
+        let url = URL(string: "\(spotifyApiBaseUrl)\(endpoint)")!
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpMethod = "PUT"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        return try await performRequest(request)
+        let (_, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw NetworkError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0, message: "PUT failed")
+        }
     }
     
-    func spotifyPut(_ endpoint: String, body: [String: Any]) async throws {
-        guard let accessToken = await AuthService.shared.accessToken else {
-            throw NetworkError.unauthorized
-        }
+    /// PUT request for uploading images (Base64 JPEG)
+    func spotifyPutImage(_ endpoint: String, imageBase64: String) async throws {
+        let token = try await getValidSpotifyToken()
         
-        let urlString = spotifyBaseUrl + endpoint
-        guard let url = URL(string: urlString) else {
-            throw NetworkError.invalidURL
-        }
+        // Clean the base64 string
+        let cleanBase64 = imageBase64
+            .replacingOccurrences(of: "data:image/jpeg;base64,", with: "")
+            .replacingOccurrences(of: "data:image/png;base64,", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+            .replacingOccurrences(of: " ", with: "")
         
+        let url = URL(string: "\(spotifyApiBaseUrl)\(endpoint)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        request.httpBody = cleanBase64.data(using: .utf8)
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let message = String(data: data, encoding: .utf8) ?? "Image upload failed"
+            throw NetworkError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0, message: message)
+        }
+        
+        print("✅ NetworkService: Uploaded playlist cover image")
+    }
+    
+    /// DELETE request to Spotify (no response body)
+    func spotifyDelete(_ endpoint: String, body: [String: Any]? = nil) async throws {
+        let token = try await getValidSpotifyToken()
+        
+        let url = URL(string: "\(spotifyApiBaseUrl)\(endpoint)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        if !body.isEmpty {
+        if let body = body {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         
         let (_, response) = try await URLSession.shared.data(for: request)
         
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw NetworkError.httpError(httpResponse.statusCode)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw NetworkError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0, message: "DELETE failed")
         }
     }
     
-    func spotifyDelete(_ endpoint: String) async throws {
-        guard let accessToken = await AuthService.shared.accessToken else {
-            throw NetworkError.unauthorized
-        }
-        
-        let urlString = spotifyBaseUrl + endpoint
-        guard let url = URL(string: urlString) else {
-            throw NetworkError.invalidURL
-        }
-        
-        var request = URLRequest(url: url)
-        request.httpMethod = "DELETE"
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        
-        let (_, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw NetworkError.httpError(httpResponse.statusCode)
-        }
+    // MARK: - Xomify API Requests
+    
+    /// Get Xomify API base URL from config
+    @MainActor
+    private func getXomifyConfig() -> (baseUrl: String, token: String) {
+        let apiId = Bundle.main.object(forInfoDictionaryKey: "XOMIFY_API_ID") as? String ?? ""
+        let apiToken = Bundle.main.object(forInfoDictionaryKey: "XOMIFY_API_TOKEN") as? String ?? ""
+        let baseUrl = "https://\(apiId).execute-api.us-east-1.amazonaws.com/dev"
+        return (baseUrl, "Bearer \(apiToken)")
     }
     
-    // MARK: - Xomify API
-    
-    func xomifyGet<T: Decodable>(_ endpoint: String, queryParams: [String: String] = [:]) async throws -> T {
-        var urlString = xomifyBaseUrl + endpoint
+    /// GET request to Xomify API
+    func xomifyGet<T: Decodable>(_ endpoint: String, queryParams: [String: String]? = nil) async throws -> T {
+        let config = await getXomifyConfig()
         
-        if !queryParams.isEmpty {
-            let queryString = queryParams.map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }.joined(separator: "&")
-            urlString += "?\(queryString)"
+        var components = URLComponents(string: "\(config.baseUrl)\(endpoint)")!
+        
+        if let params = queryParams {
+            components.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         
-        guard let url = URL(string: urlString) else {
-            throw NetworkError.invalidURL
+        guard let url = components.url else {
+            throw NetworkError.unknown(NSError(domain: "Invalid URL", code: 0))
         }
+        
+        print("🌐 XomifyAPI GET: \(url.absoluteString)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(xomifyToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(config.token, forHTTPHeaderField: "Authorization")
         
-        print("📡 GET \(urlString)")
-        
-        return try await performRequest(request)
+        return try await performXomifyRequest(request)
     }
     
+    /// POST request to Xomify API
     func xomifyPost<T: Decodable>(_ endpoint: String, body: [String: Any]) async throws -> T {
-        let urlString = xomifyBaseUrl + endpoint
+        let config = await getXomifyConfig()
         
-        guard let url = URL(string: urlString) else {
-            throw NetworkError.invalidURL
-        }
+        let url = URL(string: "\(config.baseUrl)\(endpoint)")!
+        
+        print("🌐 XomifyAPI POST: \(url.absoluteString)")
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(xomifyToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(config.token, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         
-        print("📡 POST \(urlString)")
+        return try await performXomifyRequest(request)
+    }
+    
+    /// Perform Xomify API request
+    private func performXomifyRequest<T: Decodable>(_ request: URLRequest) async throws -> T {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
+            }
+            
+            print("🌐 XomifyAPI Response: \(httpResponse.statusCode)")
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: data, encoding: .utf8) ?? "Unknown error"
+                print("❌ XomifyAPI Error: \(message)")
+                throw NetworkError.serverError(statusCode: httpResponse.statusCode, message: message)
+            }
+            
+            do {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                return try decoder.decode(T.self, from: data)
+            } catch {
+                print("❌ NetworkService: Xomify decoding error - \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("Raw JSON: \(jsonString.prefix(500))")
+                }
+                throw NetworkError.decodingError(error)
+            }
+            
+        } catch let error as NetworkError {
+            throw error
+        } catch {
+            throw NetworkError.unknown(error)
+        }
+    }
+    
+    // MARK: - Token Management
+    
+    @MainActor
+    private func getValidSpotifyToken() async throws -> String {
+        let authService = AuthService.shared
         
-        return try await performRequest(request)
+        guard let token = authService.accessToken else {
+            throw NetworkError.unauthorized
+        }
+        
+        if authService.isTokenExpired {
+            try await authService.refreshAccessToken()
+            guard let newToken = authService.accessToken else {
+                throw NetworkError.unauthorized
+            }
+            return newToken
+        }
+        
+        return token
     }
     
     // MARK: - Request Execution
     
     private func performRequest<T: Decodable>(_ request: URLRequest) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw NetworkError.invalidResponse
-        }
-        
-        print("📡 \(request.httpMethod ?? "GET") \(request.url?.absoluteString ?? "") → \(httpResponse.statusCode)")
-        
-        // Log response body for debugging
-        if let responseString = String(data: data, encoding: .utf8) {
-            let preview = responseString.prefix(500)
-            print("📄 Response (\(data.count) bytes): \(preview)")
-        }
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw NetworkError.httpError(httpResponse.statusCode)
-        }
-        
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        
         do {
-            return try decoder.decode(T.self, from: data)
-        } catch {
-            print("❌ Decoding error: \(error)")
-            if let decodingError = error as? DecodingError {
-                switch decodingError {
-                case .keyNotFound(let key, let context):
-                    print("   Key '\(key.stringValue)' not found: \(context.debugDescription)")
-                case .typeMismatch(let type, let context):
-                    print("   Type mismatch for \(type): \(context.debugDescription)")
-                case .valueNotFound(let type, let context):
-                    print("   Value not found for \(type): \(context.debugDescription)")
-                case .dataCorrupted(let context):
-                    print("   Data corrupted: \(context.debugDescription)")
-                @unknown default:
-                    print("   Unknown decoding error")
-                }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NetworkError.unknown(NSError(domain: "Invalid response", code: 0))
             }
+            
+            if httpResponse.statusCode == 401 {
+                throw NetworkError.unauthorized
+            }
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let message = String(data: data, encoding: .utf8) ?? "Unknown error"
+                throw NetworkError.serverError(statusCode: httpResponse.statusCode, message: message)
+            }
+            
+            do {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                return try decoder.decode(T.self, from: data)
+            } catch {
+                print("❌ NetworkService: Decoding error - \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("Raw JSON: \(jsonString.prefix(500))")
+                }
+                throw NetworkError.decodingError(error)
+            }
+            
+        } catch let error as NetworkError {
             throw error
-        }
-    }
-}
-
-// MARK: - Error Types
-
-enum NetworkError: Error, LocalizedError {
-    case invalidURL
-    case invalidResponse
-    case unauthorized
-    case httpError(Int)
-    case decodingError(Error)
-    
-    var errorDescription: String? {
-        switch self {
-        case .invalidURL:
-            return "Invalid URL"
-        case .invalidResponse:
-            return "Invalid response from server"
-        case .unauthorized:
-            return "Not authenticated"
-        case .httpError(let code):
-            return "HTTP error: \(code)"
-        case .decodingError(let error):
-            return "Failed to decode response: \(error.localizedDescription)"
+        } catch {
+            throw NetworkError.unknown(error)
         }
     }
 }

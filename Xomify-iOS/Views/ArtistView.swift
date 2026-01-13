@@ -13,31 +13,46 @@ struct ArtistView: View {
     @State private var errorMessage: String?
     @State private var selectedSection = 0 // 0: Top Tracks, 1: Albums, 2: Singles
     
+    @Bindable private var playlistBuilder = PlaylistBuilderManager.shared
     private let spotifyService = SpotifyService.shared
     
     var body: some View {
-        ScrollView {
-            if isLoading {
-                ProgressView()
-                    .padding(.top, 100)
-            } else if let error = errorMessage {
-                errorState(error)
-            } else if let artist = artist {
-                VStack(spacing: 0) {
-                    // Artist Header
-                    artistHeader(artist)
-                    
-                    // Stats Bar
-                    statsBar(artist)
-                    
-                    // Action Buttons
-                    actionButtons(artist)
-                    
-                    // Section Picker
-                    sectionPicker
-                    
-                    // Content
-                    sectionContent
+        ZStack {
+            ScrollView {
+                if isLoading {
+                    ProgressView()
+                        .padding(.top, 100)
+                } else if let error = errorMessage {
+                    errorState(error)
+                } else if let artist = artist {
+                    VStack(spacing: 0) {
+                        // Artist Header
+                        artistHeader(artist)
+                        
+                        // Stats Bar
+                        statsBar(artist)
+                        
+                        // Action Buttons
+                        actionButtons(artist)
+                        
+                        // Section Picker
+                        sectionPicker
+                        
+                        // Content
+                        sectionContent
+                    }
+                    .padding(.bottom, 100) // Space for floating button
+                }
+            }
+            
+            // Floating playlist builder button
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    PlaylistBuilderFloatingButton()
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20)
                 }
             }
         }
@@ -46,6 +61,9 @@ struct ArtistView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadArtist()
+        }
+        .sheet(isPresented: $playlistBuilder.isShowing) {
+            PlaylistBuilderView()
         }
     }
     
@@ -250,6 +268,27 @@ struct ArtistView: View {
     
     private var topTracksSection: some View {
         VStack(spacing: 0) {
+            // Add all to builder button
+            if !topTracks.isEmpty {
+                Button {
+                    playlistBuilder.addTracks(topTracks)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle")
+                        Text("Add All Top Tracks to Builder")
+                    }
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.xomifyPurple.opacity(0.2))
+                    .foregroundColor(.xomifyPurple)
+                    .cornerRadius(25)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 12)
+            }
+            
             ForEach(Array(topTracks.enumerated()), id: \.element.id) { index, track in
                 trackRow(track, rank: index + 1)
                 
@@ -298,10 +337,8 @@ struct ArtistView: View {
             
             Spacer()
             
-            // Duration
-            Text(track.duration)
-                .font(.caption)
-                .foregroundColor(.gray)
+            // Add to playlist builder
+            AddToPlaylistButton(track: track)
             
             // Play button
             Button {

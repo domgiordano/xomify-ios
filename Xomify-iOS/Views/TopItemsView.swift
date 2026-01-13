@@ -4,37 +4,57 @@ struct TopItemsView: View {
     @State private var viewModel = TopItemsViewModel()
     @State private var selectedCategory = 0 // 0: Tracks, 1: Artists, 2: Genres
     @State private var selectedTerm: TimeRange = .shortTerm
+    @State private var showingSaveToPlaylistAlert = false
+    @State private var isSavingPlaylist = false
+    @State private var playlistSaveMessage: String?
+    @State private var savedPlaylistUrl: URL?
+    
+    @Bindable private var playlistBuilder = PlaylistBuilderManager.shared
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Category selector
-                categorySelector
-                
-                // Term selector
-                termSelector
-                
-                // Content
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        if viewModel.isLoading {
-                            ProgressView()
-                                .padding(.top, 40)
-                        } else {
-                            switch selectedCategory {
-                            case 0:
-                                tracksContent
-                            case 1:
-                                artistsContent
-                            case 2:
-                                genresContent
-                            default:
-                                EmptyView()
+            ZStack {
+                VStack(spacing: 0) {
+                    // Category selector
+                    categorySelector
+                    
+                    // Term selector
+                    termSelector
+                    
+                    // Content
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            if viewModel.isLoading {
+                                ProgressView()
+                                    .padding(.top, 40)
+                            } else {
+                                switch selectedCategory {
+                                case 0:
+                                    tracksContent
+                                case 1:
+                                    artistsContent
+                                case 2:
+                                    genresContent
+                                default:
+                                    EmptyView()
+                                }
                             }
                         }
+                        .padding(.horizontal)
+                        .padding(.top, 12)
+                        .padding(.bottom, 100) // Space for floating button
                     }
-                    .padding(.horizontal)
-                    .padding(.top, 12)
+                }
+                
+                // Floating playlist builder button
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        PlaylistBuilderFloatingButton()
+                            .padding(.trailing, 20)
+                            .padding(.bottom, 20)
+                    }
                 }
             }
             .background(Color.xomifyDark.ignoresSafeArea())
@@ -45,6 +65,27 @@ struct TopItemsView: View {
             }
             .refreshable {
                 await viewModel.loadData()
+            }
+            .sheet(isPresented: $playlistBuilder.isShowing) {
+                PlaylistBuilderView()
+            }
+            .alert("Playlist Created!", isPresented: .init(
+                get: { playlistSaveMessage != nil },
+                set: { if !$0 { playlistSaveMessage = nil; savedPlaylistUrl = nil } }
+            )) {
+                if let url = savedPlaylistUrl {
+                    Button("Open in Spotify") {
+                        UIApplication.shared.open(url)
+                        playlistSaveMessage = nil
+                        savedPlaylistUrl = nil
+                    }
+                }
+                Button("OK", role: .cancel) {
+                    playlistSaveMessage = nil
+                    savedPlaylistUrl = nil
+                }
+            } message: {
+                Text(playlistSaveMessage ?? "")
             }
         }
     }
@@ -104,9 +145,126 @@ struct TopItemsView: View {
     
     private var tracksContent: some View {
         let tracks = getTracks(for: selectedTerm)
-        return ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-            trackRow(track, rank: index + 1)
+        return VStack(spacing: 12) {
+            // Save to Playlist button
+            if !tracks.isEmpty {
+                saveToPlaylistButton(tracks: tracks, term: selectedTerm)
+            }
+            
+            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                trackRow(track, rank: index + 1)
+            }
         }
+    }
+    
+    private func saveToPlaylistButton(tracks: [SpotifyTrack], term: TimeRange) -> some View {
+        HStack(spacing: 12) {
+            // Add all to builder
+            Button {
+                playlistBuilder.addTracks(tracks)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "plus.circle")
+                    Text("Add to Builder")
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.xomifyPurple.opacity(0.2))
+                .foregroundColor(.xomifyPurple)
+                .cornerRadius(20)
+            }
+            
+            // Save directly to Spotify playlist
+            Button {
+                Task {
+                    await saveTracksToPlaylist(tracks: tracks, term: term)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    if isSavingPlaylist {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    Text("Save as Playlist")
+                }
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.xomifyGreen)
+                .foregroundColor(.black)
+                .cornerRadius(20)
+            }
+            .disabled(isSavingPlaylist)
+            
+            Spacer()
+        }
+        .padding(.bottom, 8)
+    }
+    
+    private func saveTracksToPlaylist(tracks: [SpotifyTrack], term: TimeRange) async {
+        isSavingPlaylist = true
+        
+        let spotifyService = SpotifyService.shared
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM yyyy"
+        let dateString = dateFormatter.string(from: Date())
+        
+        let playlistName = "Top Songs - \(term.displayName) (\(dateString))"
+        let description = "Your top \(tracks.count) songs - \(term.displayName.lowercased()) • Created with Xomify"
+        
+        do {
+            // Get user ID
+            let user = try await spotifyService.getCurrentUser()
+            guard let userId = user.id else {
+                throw NSError(domain: "TopItems", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not get user ID"])
+            }
+            
+            // Create playlist
+            let playlist = try await spotifyService.createPlaylist(
+                userId: userId,
+                name: playlistName,
+                description: description,
+                isPublic: false
+            )
+            
+            // Add tracks
+            let trackUris = tracks.compactMap { $0.uri }
+            if !trackUris.isEmpty {
+                try await spotifyService.addTracksToPlaylist(playlistId: playlist.id, trackUris: trackUris)
+            }
+            
+            // Upload cover image
+            let coverImage = XomifyConstants.xomifyCoverBase64
+            if !coverImage.isEmpty && coverImage != "PASTE_YOUR_BASE64_IMAGE_HERE" {
+                do {
+                    try await spotifyService.uploadPlaylistCover(playlistId: playlist.id, imageBase64: coverImage)
+                } catch {
+                    print("⚠️ TopItems: Cover upload failed - \(error)")
+                }
+            }
+            
+            playlistSaveMessage = "Created '\(playlistName)' with \(tracks.count) tracks!"
+            if let urlString = playlist.externalUrls?["spotify"] {
+                savedPlaylistUrl = URL(string: urlString)
+            }
+            
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
+            
+        } catch {
+            playlistSaveMessage = "Failed: \(error.localizedDescription)"
+            
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.error)
+        }
+        
+        isSavingPlaylist = false
     }
     
     private func getTracks(for term: TimeRange) -> [SpotifyTrack] {
@@ -173,10 +331,8 @@ struct TopItemsView: View {
             
             Spacer()
             
-            // Duration
-            Text(track.duration)
-                .font(.caption)
-                .foregroundColor(.gray)
+            // Add to playlist builder
+            AddToPlaylistButton(track: track)
             
             // Play button
             Button {
